@@ -49,6 +49,7 @@
         <a href="#/" data-page-link="home">Início</a>
         <a href="#/historia" data-page-link="historia">História</a>
         <a href="#/servicos" data-page-link="servicos">Serviços</a>
+        <a href="#/mural" data-page-link="mural">Mural</a>
         <a href="#/app" data-page-link="app">App</a>
       </nav>
       <a class="btn btn-gold" href="#/agendar">Agendar</a>
@@ -151,6 +152,21 @@
               <span class="stamp on">6</span><span class="stamp on">7</span><span class="stamp on">8</span><span class="stamp on">9</span><span class="stamp on">10</span>
               <span class="stamp gift">+1</span>
             </div>
+          </div>
+        </section>
+
+        <section class="band">
+          <div class="wrap mural-home">
+            <div>
+              <p class="section-kicker">Mural</p>
+              <h2>A cadeira também escuta.</h2>
+              <p>
+                Crítica, opinião ou elogio. Espaço aberto: o que você escreve aparece para quem
+                entra na casa.
+              </p>
+              <a class="btn btn-ghost" href="#/mural">Escrever no mural</a>
+            </div>
+            <div id="home-notes"></div>
           </div>
         </section>
 
@@ -309,6 +325,40 @@
         </div>
       </section>
 
+      <section data-page="mural" hidden>
+        <div class="wrap page-block">
+          <header class="page-head">
+            <p class="section-kicker">A voz da cadeira</p>
+            <h1>Crítica, opinião ou elogio.</h1>
+            <p>
+              Sem cadastro. O nome pode ser o seu ou ficar em branco. O que entra aqui fica visível
+              para quem abre o site.
+            </p>
+          </header>
+          <div class="mural-layout">
+            <form id="mural-form">
+              <fieldset class="kind-pick">
+                <legend class="sr-only">Tipo da mensagem</legend>
+                <label><input type="radio" name="kind" value="critica" /> Crítica</label>
+                <label><input type="radio" name="kind" value="opiniao" checked /> Opinião</label>
+                <label><input type="radio" name="kind" value="elogio" /> Elogio</label>
+              </fieldset>
+              <label class="field">
+                Nome
+                <input name="name" maxlength="40" autocomplete="name" placeholder="Se quiser assinar" />
+              </label>
+              <label class="field">
+                Mensagem
+                <textarea name="text" required minlength="8" maxlength="400" rows="5" placeholder="O que a cadeira precisa ouvir"></textarea>
+              </label>
+              <p id="mural-status" aria-live="polite"></p>
+              <button class="btn btn-gold" type="submit">Publicar no mural</button>
+            </form>
+            <div id="mural-list"></div>
+          </div>
+        </div>
+      </section>
+
       <section data-page="painel" hidden>
         <div class="wrap page-block" id="painel-root"></div>
       </section>
@@ -329,6 +379,7 @@
           <a href="#/historia">História</a>
           <a href="#/servicos">Serviços</a>
           <a href="#/agendar">Agendar</a>
+          <a href="#/mural">Mural</a>
           <a href="#/app">App do cliente</a>
           <a href="#/painel">Área da casa</a>
         </div>

@@ -338,13 +338,16 @@ button:disabled { opacity: 0.38; cursor: not-allowed; }
   padding: 0 0 12px;
 }
 .field { display: grid; gap: 6px; margin: 12px 0; color: var(--muted); }
-input, select {
+input, select, textarea {
   width: 100%;
   background: #12100e;
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px 14px;
+  font: inherit;
+  color: inherit;
 }
+textarea { resize: vertical; min-height: 120px; }
 .free-toggle {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -462,6 +465,53 @@ body[data-view="app"] .site-footer { display: none; }
 .footer-links a { color: var(--gold); text-decoration: none; }
 .legal { width: min(1080px, calc(100% - 40px)); margin: 18px auto 0; font-size: 0.85rem; }
 
+.mural-home, .mural-layout {
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: 28px;
+  align-items: start;
+}
+.kind-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+  margin: 0 0 4px;
+}
+.kind-pick label {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.kind-pick input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+.kind-pick label:has(input:checked) {
+  background: linear-gradient(180deg, #f0ddb0, #c6a15b);
+  color: #1c140b;
+  border-color: transparent;
+}
+.kind-pick label:has(input:focus-visible) { outline: 2px solid var(--gold); outline-offset: 2px; }
+.note {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px 16px 12px;
+  margin-bottom: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.note p { margin: 0; }
+.note-text { color: var(--ink); font-size: 1.05rem; line-height: 1.45; }
+.note-by { color: var(--gold); font-size: 0.85rem; margin-top: 10px !important; }
+.note .text-btn { margin-top: 8px; }
+.note-critica { border-color: rgba(224, 160, 144, 0.7); }
+.note-elogio { border-color: rgba(183, 211, 194, 0.7); }
+
 @media (max-width: 860px) {
   .nav-toggle { display: block; }
   .nav {
@@ -474,7 +524,7 @@ body[data-view="app"] .site-footer { display: none; }
     z-index: 6;
   }
   body.menu-open .nav { display: flex; }
-  .ficha, .place-grid, .split, .loyalty-band, .steps-how, .chairs, .panel-grid, .footer-grid, .app-stage {
+  .ficha, .place-grid, .split, .loyalty-band, .mural-home, .mural-layout, .steps-how, .chairs, .panel-grid, .footer-grid, .app-stage {
     grid-template-columns: 1fr;
   }
   .ficha article + article { border-left: 0; border-top: 1px solid var(--line); }

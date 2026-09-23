@@ -1,4 +1,5 @@
 import { BARBERS, HOUSE, SERVICES } from "./data.js"
+import { KINDS, fetchNotes, postNote, removeNote } from "./mural.js"
 import {
   barberById,
   brl,
@@ -426,15 +427,77 @@ function renderPainel() {
         </form>
         <h2>Cartões</h2>
         ${roster}
+        <h2>Mural</h2>
+        <p>O que os clientes escreveram. Você pode tirar uma mensagem daqui.</p>
+        <div id="mural-admin"><p>Abrindo o mural…</p></div>
         <button type="button" class="btn btn-ghost" data-act="wipe">Apagar agenda e cartões deste aparelho</button>
         <button type="button" class="back" data-act="lock">Trancar a área</button>
       </div>
     </div>`
+  loadMuralAdmin()
+}
+
+function noteWhen(iso) {
+  if (!iso) return ""
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ""
+  return new Intl.DateTimeFormat("pt-BR", { day: "numeric", month: "short" }).format(date)
+}
+
+function noteCard(note, admin = false) {
+  const by = [note.name, noteWhen(note.createdAt)].filter(Boolean).join(" · ")
+  const remove = admin
+    ? `<button type="button" class="text-btn" data-drop-note="${esc(note._id)}">Tirar do mural</button>`
+    : ""
+  return `<article class="note note-${esc(note.kind)}">
+      <span class="tag">${esc(KINDS[note.kind] || "")}</span>
+      <p class="note-text">${esc(note.text)}</p>
+      <p class="note-by">${esc(by)}</p>
+      ${remove}
+    </article>`
+}
+
+async function paintNotes(box, { admin = false, limit = 0, empty = "" } = {}) {
+  if (!box) return
+  const gen = String(Number(box.dataset.gen || 0) + 1)
+  box.dataset.gen = gen
+  try {
+    let notes = await fetchNotes()
+    if (limit) notes = notes.slice(0, limit)
+    if (box.dataset.gen !== gen || !box.isConnected) return
+    box.innerHTML = notes.length ? notes.map((note) => noteCard(note, admin)).join("") : `<p>${empty}</p>`
+  } catch {
+    if (box.dataset.gen === gen && box.isConnected) {
+      box.innerHTML = `<p class="error">O mural não abriu agora. Tenta de novo em instantes.</p>`
+    }
+  }
+}
+
+function renderMural() {
+  const list = document.querySelector("#mural-list")
+  if (list) list.innerHTML = `<p>Abrindo o mural…</p>`
+  paintNotes(list, { empty: "O mural está em branco. A primeira palavra pode ser a sua." })
+}
+
+function loadHomeNotes() {
+  const box = document.querySelector("#home-notes")
+  if (box && !box.childElementCount) box.innerHTML = `<p>Abrindo o mural…</p>`
+  paintNotes(box, {
+    limit: 2,
+    empty: "O mural está em branco. A primeira palavra pode ser a sua.",
+  })
+}
+
+function loadMuralAdmin() {
+  paintNotes(document.querySelector("#mural-admin"), {
+    admin: true,
+    empty: "Nenhuma mensagem no mural.",
+  })
 }
 
 function route() {
   const raw = (location.hash.replace(/^#\/?/, "") || "home").split("?")[0]
-  const known = ["home", "historia", "servicos", "agendar", "app", "painel"]
+  const known = ["home", "historia", "servicos", "mural", "agendar", "app", "painel"]
   const page = known.includes(raw) ? raw : "home"
   document.querySelectorAll("[data-page]").forEach((section) => {
     section.hidden = section.dataset.page !== page
@@ -446,6 +509,8 @@ function route() {
   document.body.classList.remove("menu-open")
   const toggle = document.querySelector(".nav-toggle")
   toggle.setAttribute("aria-expanded", "false")
+  if (page === "home") loadHomeNotes()
+  if (page === "mural") renderMural()
   if (page === "agendar") renderWizard()
   if (page === "app") renderApp()
   if (page === "painel") renderPainel()
@@ -455,6 +520,7 @@ function route() {
     historia: "História · M&A Barber",
     servicos: "Serviços · M&A Barber",
     agendar: "Agendar · M&A Barber",
+    mural: "Mural · M&A Barber",
     app: "App · M&A Barber",
     painel: "Área da casa · M&A Barber",
   }
@@ -478,7 +544,7 @@ document.querySelector(".nav-toggle").addEventListener("click", () => {
   document.querySelector(".nav-toggle").setAttribute("aria-expanded", open ? "true" : "false")
 })
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const wizardButton = event.target.closest(".wizard [data-act]")
   if (wizardButton) {
     const act = wizardButton.dataset.act
@@ -575,6 +641,20 @@ document.addEventListener("click", (event) => {
     painelOk = false
     sessionStorage.removeItem("ma-painel")
     renderPainel()
+    return
+  }
+  const drop = event.target.closest("[data-drop-note]")
+  if (drop) {
+    if (!confirm("Tirar esta mensagem do mural?")) return
+    try {
+      await removeNote(drop.dataset.dropNote)
+      painelMsg = "Mensagem retirada do mural."
+      painelError = ""
+    } catch {
+      painelError = "Não consegui tirar a mensagem agora."
+      painelMsg = ""
+    }
+    renderPainel()
   }
 })
 
@@ -590,7 +670,7 @@ document.addEventListener("input", (event) => {
   }
 })
 
-document.addEventListener("submit", (event) => {
+document.addEventListener("submit", async (event) => {
   if (event.target.id === "confirm-form") {
     event.preventDefault()
     const data = new FormData(event.target)
@@ -678,6 +758,50 @@ document.addEventListener("submit", (event) => {
     painelError = ""
     painelMsg = data.get("free") === "on" ? "Cortesia carimbada." : `${result.count} corte(s) no cartão. ${loyaltyLine(info)}`
     renderPainel()
+    return
+  }
+  if (event.target.id === "mural-form") {
+    event.preventDefault()
+    const data = new FormData(event.target)
+    const text = String(data.get("text") || "").trim().replace(/\s+/g, " ")
+    const name = cleanName(data.get("name") || "")
+    const kind = String(data.get("kind") || "")
+    const status = document.querySelector("#mural-status")
+    const button = event.target.querySelector("button[type=submit]")
+    const fail = (message) => {
+      status.textContent = message
+      status.className = "error"
+    }
+    if (!KINDS[kind]) {
+      fail("Escolhe crítica, opinião ou elogio.")
+      return
+    }
+    if (text.length < 8) {
+      fail("Escreve um pouco mais, pelo menos uma frase.")
+      return
+    }
+    if (text.length > 400) {
+      fail("Cabe até 400 caracteres.")
+      return
+    }
+    button.disabled = true
+    status.textContent = "Publicando…"
+    status.className = ""
+    try {
+      await postNote({
+        kind,
+        name: name || "Alguém da vila",
+        text,
+        createdAt: new Date().toISOString(),
+      })
+      event.target.querySelector("[name=text]").value = ""
+      status.textContent = "Entrou no mural."
+      status.className = "ok-note"
+      renderMural()
+    } catch {
+      fail("Não consegui publicar agora. Tenta de novo.")
+    }
+    button.disabled = false
   }
 })
 
