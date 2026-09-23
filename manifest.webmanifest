@@ -1,0 +1,18 @@
+{
+  "name": "M&A Barber",
+  "short_name": "M&A Barber",
+  "description": "Agende seu horário na Vila Militar e acompanhe o cartão de fidelidade.",
+  "start_url": "./#/app",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#090909",
+  "theme_color": "#090909",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "logo.png",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
