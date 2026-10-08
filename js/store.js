@@ -1,6 +1,5 @@
 import { BARBERS, HOUSE, SERVICES } from "./data.js"
 
-const KEY = "ma-barber-db-v1"
 const SKEY = "ma-barber-session-v1"
 
 let appointments = []
@@ -103,11 +102,9 @@ export function isFuture(date, time) {
 
 export function load() {
   try {
-    const raw = localStorage.getItem(KEY)
-    const parsed = raw ? JSON.parse(raw) : []
-    appointments = Array.isArray(parsed) ? parsed : []
+    localStorage.removeItem("ma-barber-db-v1")
   } catch {
-    appointments = []
+    /* o navegador antigo não guarda mais a agenda */
   }
   try {
     const raw = localStorage.getItem(SKEY)
@@ -119,9 +116,53 @@ export function load() {
 }
 
 function save() {
-  localStorage.setItem(KEY, JSON.stringify(appointments))
   if (session) localStorage.setItem(SKEY, JSON.stringify(session))
   else localStorage.removeItem(SKEY)
+}
+
+async function readBody(response) {
+  return response.json().catch(() => ({}))
+}
+
+export async function fetchAvailability(barberId, serviceId) {
+  const params = new URLSearchParams({ barberId, serviceId })
+  const response = await fetch(`/api/availability?${params}`)
+  const data = await readBody(response)
+  if (!response.ok) throw new Error(data.error || "agenda")
+  return Array.isArray(data.days) ? data.days : []
+}
+
+export async function pullMine(phone) {
+  const p = digits(phone)
+  const response = await fetch(`/api/me?phone=${encodeURIComponent(p)}`)
+  const data = await readBody(response)
+  if (!response.ok) throw new Error(data.error || "agenda")
+  const incoming = Array.isArray(data.appointments) ? data.appointments : []
+  appointments = appointments.filter((item) => item.clientPhone !== p).concat(incoming)
+}
+
+export async function pullPainel() {
+  const response = await fetch("/api/painel/appointments")
+  if (response.status === 401 || response.status === 503) return { ok: false }
+  const data = await readBody(response)
+  if (!response.ok) throw new Error(data.error || "painel")
+  appointments = Array.isArray(data.appointments) ? data.appointments : []
+  return { ok: true }
+}
+
+export async function loginPainel(pin) {
+  const response = await fetch("/api/painel/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin }),
+  })
+  const data = await readBody(response)
+  if (!response.ok) return { ok: false, error: data.error || "Código incorreto." }
+  return { ok: true }
+}
+
+export async function logoutPainel() {
+  await fetch("/api/painel/logout", { method: "POST" })
 }
 
 export function getAppointments() {
@@ -223,7 +264,7 @@ function validPerson(name, phone) {
   return { ok: true, name: clean, phone: p }
 }
 
-export function createAppointment(input) {
+export async function createAppointment(input) {
   const person = validPerson(input.clientName, input.clientPhone)
   if (!person.ok) return person
   if (!serviceById(input.serviceId) || !barberById(input.barberId)) {
@@ -232,82 +273,72 @@ export function createAppointment(input) {
   if (parseISO(input.date).getDay() === 0) {
     return { ok: false, error: "Domingo a casa fecha." }
   }
-  const slot = slotsFor(input.date, input.barberId, input.serviceId).find((item) => item.time === input.time)
-  if (!slot?.free) return { ok: false, error: "Esse horário acabou de sair. Escolhe outro." }
-  if (clientBusy(input.date, person.phone, input.time, input.serviceId)) {
-    return { ok: false, error: "Você já tem um horário nesse período." }
+  let response
+  try {
+    response = await fetch("/api/appointments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        clientName: person.name,
+        clientPhone: person.phone,
+        serviceId: input.serviceId,
+        barberId: input.barberId,
+        date: input.date,
+        time: input.time,
+        freeCut: Boolean(input.freeCut),
+      }),
+    })
+  } catch {
+    return { ok: false, error: "A agenda não respondeu agora. Tenta de novo." }
   }
-  if (input.freeCut && loyaltyOf(person.phone).available < 1) {
-    return { ok: false, error: "Esse telefone ainda não tem corte de fidelidade." }
-  }
-  const appointment = {
-    id: crypto.randomUUID(),
-    clientName: person.name,
-    clientPhone: person.phone,
-    serviceId: input.serviceId,
-    barberId: input.barberId,
-    date: input.date,
-    time: input.time,
-    status: "agendado",
-    freeCut: Boolean(input.freeCut),
-    kind: "reserva",
-    createdAt: new Date().toISOString(),
-  }
-  appointments.push(appointment)
+  const data = await readBody(response)
+  if (!response.ok) return { ok: false, error: data.error || "Não consegui marcar agora." }
+  if (data.appointment) appointments.push(data.appointment)
   session = { name: person.name, phone: person.phone }
   save()
-  return { ok: true, appointment }
+  return { ok: true, appointment: data.appointment }
 }
 
-export function setStatus(id, status) {
-  const item = appointments.find((entry) => entry.id === id)
-  if (!item) return { ok: false, error: "Horário não encontrado." }
-  item.status = status
-  save()
+export async function setStatus(id, status) {
+  const response = await fetch("/api/painel/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, status }),
+  })
+  const data = await readBody(response)
+  if (!response.ok) return { ok: false, error: data.error || "Não consegui atualizar." }
   return { ok: true }
 }
 
-export function cancelByClient(id, phone) {
-  const item = appointments.find((entry) => entry.id === id && entry.clientPhone === digits(phone))
-  if (!item || item.status !== "agendado" || item.kind !== "reserva") {
-    return { ok: false, error: "Esse horário não pode ser cancelado por aqui." }
-  }
-  if (!isFuture(item.date, item.time)) {
-    return { ok: false, error: "Esse horário já passou. Fala com a casa." }
-  }
-  item.status = "cancelado"
-  save()
+export async function cancelByClient(id, phone) {
+  const response = await fetch("/api/cancel", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id, phone: digits(phone) }),
+  })
+  const data = await readBody(response)
+  if (!response.ok) return { ok: false, error: data.error || "Não consegui cancelar." }
   return { ok: true }
 }
 
-export function stampCuts(input) {
+export async function stampCuts(input) {
   const person = validPerson(input.name, input.phone)
   if (!person.ok) return person
-  if (!serviceById(input.serviceId) || !barberById(input.barberId)) {
-    return { ok: false, error: "Escolhe o serviço e a cadeira." }
-  }
-  const freeCut = Boolean(input.freeCut)
-  const count = freeCut ? 1 : Math.max(1, Math.min(30, Number(input.count) || 1))
-  if (freeCut && loyaltyOf(person.phone).available < 1) {
-    return { ok: false, error: "Esse cliente ainda não tem corte grátis." }
-  }
-  for (let i = 0; i < count; i += 1) {
-    appointments.push({
-      id: crypto.randomUUID(),
-      clientName: person.name,
-      clientPhone: person.phone,
+  const response = await fetch("/api/painel/stamp", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: person.name,
+      phone: person.phone,
       serviceId: input.serviceId,
       barberId: input.barberId,
-      date: todayISO(),
-      time: "--",
-      status: "concluido",
-      freeCut,
-      kind: "carimbo",
-      createdAt: new Date().toISOString(),
-    })
-  }
-  save()
-  return { ok: true, count }
+      count: input.count,
+      freeCut: Boolean(input.freeCut),
+    }),
+  })
+  const data = await readBody(response)
+  if (!response.ok) return { ok: false, error: data.error || "Não consegui carimbar." }
+  return { ok: true, count: data.count }
 }
 
 export function reservationsOn(date) {
@@ -327,9 +358,12 @@ export function clients() {
   return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "pt-BR"))
 }
 
-export function clearAppointments() {
+export async function clearAppointments() {
+  const response = await fetch("/api/painel/wipe", { method: "POST" })
+  const data = await readBody(response)
+  if (!response.ok) return { ok: false, error: data.error || "Não consegui apagar a agenda." }
   appointments = []
-  save()
+  return { ok: true }
 }
 
 load()

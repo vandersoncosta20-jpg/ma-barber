@@ -1,0 +1,9 @@
+.git
+.github
+.wrangler
+worker
+wrangler.toml
+.dev.vars
+serve.ps1
+.assetsignore
+.gitignore
