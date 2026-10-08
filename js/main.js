@@ -12,21 +12,24 @@ import {
   dayParts,
   digits,
   formatLong,
+  fetchAvailability,
   formatPhone,
   getAppointments,
   getSession,
   isoFromDate,
   isFuture,
   load,
+  loginPainel,
+  logoutPainel,
   loyaltyLine,
   loyaltyOf,
-  openDates,
   parseISO,
+  pullMine,
+  pullPainel,
   reservationsOn,
   serviceById,
   setSession,
   setStatus,
-  slotsFor,
   stampCuts,
 } from "./store.js"
 
@@ -42,7 +45,13 @@ const draft = {
   switching: false,
   done: null,
   error: "",
+  availability: null,
+  availabilityKey: "",
 }
+
+let wizardGen = 0
+let appGen = 0
+let painelGen = 0
 
 const app = { tab: "inicio" }
 let painelOk = sessionStorage.getItem("ma-painel") === "ok"
@@ -136,11 +145,11 @@ function stepBody() {
     ).join("")
   }
   if (draft.step === 2) {
-    const days = openDates(18)
-      .map((date) => {
-        const parts = dayParts(date)
-        const free = slotsFor(date, draft.barberId, draft.serviceId).filter((slot) => slot.free).length
-        return `<button type="button" class="day-chip ${draft.date === date ? "on" : ""}" data-act="date" data-date="${date}" ${free ? "" : "disabled"}>
+    const days = (draft.availability || [])
+      .map((day) => {
+        const parts = dayParts(day.date)
+        const free = day.slots.filter((slot) => slot.free).length
+        return `<button type="button" class="day-chip ${draft.date === day.date ? "on" : ""}" data-act="date" data-date="${day.date}" ${free ? "" : "disabled"}>
           <small>${esc(parts.weekday)}</small><strong>${parts.day}</strong><small>${free ? esc(parts.month) : "lotado"}</small>
         </button>`
       })
@@ -148,7 +157,7 @@ function stepBody() {
     return `<div class="day-scroller">${days}</div><p>Domingo a casa fecha. ${esc(HOUSE.place)}.</p>`
   }
   if (draft.step === 3) {
-    const slots = slotsFor(draft.date, draft.barberId, draft.serviceId)
+    const slots = (draft.availability || []).find((day) => day.date === draft.date)?.slots || []
     return `<div class="time-grid">${slots
       .map(
         (slot) =>
@@ -205,12 +214,38 @@ function ticketHtml(appointment) {
   </article>`
 }
 
-function renderWizard() {
+async function renderWizard() {
   const root = wizardHost()
   if (!root) return
+  const gen = ++wizardGen
   if (draft.done) {
     root.innerHTML = ticketHtml(draft.done)
     return
+  }
+  const key = `${draft.barberId}:${draft.serviceId}`
+  if ((draft.step === 2 || draft.step === 3) && draft.availabilityKey !== key) {
+    root.innerHTML = `<p>Abrindo os horários…</p>`
+    try {
+      const days = await fetchAvailability(draft.barberId, draft.serviceId)
+      if (gen !== wizardGen || !root.isConnected) return
+      draft.availability = days
+      draft.availabilityKey = key
+    } catch {
+      if (gen !== wizardGen || !root.isConnected) return
+      root.innerHTML = `<button type="button" class="back" data-act="back">Voltar</button><p class="error">A agenda não abriu agora. Tenta de novo.</p><button type="button" class="btn btn-gold" data-act="retry">Tentar de novo</button>`
+      return
+    }
+  }
+  if (draft.step === 4) {
+    const phone = bookingPhone()
+    if (phone.length >= 10) {
+      try {
+        await pullMine(phone)
+      } catch {
+        /* o carimbo de fidelidade fica de fora se a agenda não responder */
+      }
+      if (gen !== wizardGen || !root.isConnected) return
+    }
   }
   const steps = ["Serviço", "Cadeira", "Dia", "Hora", "Confirmar"]
   root.innerHTML = `
@@ -268,16 +303,28 @@ function miniStamps(phone) {
   return `<span class="mini-stamps">${Array.from({ length: info.every }, (_, index) => `<i class="${index < info.progress ? "on" : ""}"></i>`).join("")}</span>`
 }
 
-function renderApp() {
+async function renderApp() {
+  const gen = ++appGen
   const body = document.querySelector("#app-body")
   const tabs = document.querySelector("#app-tabs")
   const session = getSession()
+  if (session) {
+    try {
+      await pullMine(session.phone)
+    } catch {
+      if (gen !== appGen) return
+      tabs.hidden = true
+      body.innerHTML = `<p class="error">Não consegui abrir sua agenda agora. Tenta de novo em instantes.</p>`
+      return
+    }
+    if (gen !== appGen) return
+  }
   if (!session) {
     tabs.hidden = true
     body.innerHTML = `<form id="gate-form" class="gate">
       <p class="section-kicker">Sua cadeira</p>
       <h2>Entra com seu nome.</h2>
-      <p>O telefone acha sua agenda e seu cartão neste aparelho. A casa fica na Vila Militar, ao lado do Condomínio Coqueiros de Itapuã.</p>
+      <p>O telefone acha sua agenda e seu cartão. A casa fica na Vila Militar, ao lado do Condomínio Coqueiros de Itapuã.</p>
       <label class="field">Nome<input name="name" required maxlength="60" autocomplete="name" /></label>
       <label class="field">Telefone com DDD<input name="phone" required inputmode="tel" maxlength="16" autocomplete="tel" placeholder="(71) 90000-0000" /></label>
       ${app.error ? `<p class="error">${esc(app.error)}</p>` : ""}
@@ -347,8 +394,9 @@ function shiftDate(iso, delta) {
   return isoFromDate(date)
 }
 
-function renderPainel() {
+async function renderPainel() {
   const root = document.querySelector("#painel-root")
+  const gen = ++painelGen
   if (!painelOk) {
     root.innerHTML = `<form id="pin-form" class="pin-gate">
       <p class="section-kicker">Área da casa</p>
@@ -360,6 +408,22 @@ function renderPainel() {
     </form>`
     return
   }
+  root.innerHTML = `<p>Abrindo o livro…</p>`
+  try {
+    const result = await pullPainel()
+    if (gen !== painelGen) return
+    if (!result.ok) {
+      painelOk = false
+      sessionStorage.removeItem("ma-painel")
+      renderPainel()
+      return
+    }
+  } catch {
+    if (gen !== painelGen) return
+    root.innerHTML = `<p class="error">O livro não abriu agora. Tenta de novo em instantes.</p>`
+    return
+  }
+  if (gen !== painelGen) return
   if (!painelDate) painelDate = isoFromDate(new Date())
   const rows = reservationsOn(painelDate)
   const closed = parseISO(painelDate).getDay() === 0
@@ -430,7 +494,7 @@ function renderPainel() {
         <h2>Mural</h2>
         <p>O que os clientes escreveram. Você pode tirar uma mensagem daqui.</p>
         <div id="mural-admin"><p>Abrindo o mural…</p></div>
-        <button type="button" class="btn btn-ghost" data-act="wipe">Apagar agenda e cartões deste aparelho</button>
+        <button type="button" class="btn btn-ghost" data-act="wipe">Apagar agenda e cartões da casa</button>
         <button type="button" class="back" data-act="lock">Trancar a área</button>
       </div>
     </div>`
@@ -537,6 +601,8 @@ function resetDraft() {
   draft.done = null
   draft.error = ""
   draft.switching = false
+  draft.availability = null
+  draft.availabilityKey = ""
 }
 
 document.querySelector(".nav-toggle").addEventListener("click", () => {
@@ -553,12 +619,16 @@ document.addEventListener("click", async (event) => {
       draft.serviceId = wizardButton.dataset.id
       draft.date = null
       draft.time = null
+      draft.availability = null
+      draft.availabilityKey = ""
       draft.step = 1
       draft.done = null
     } else if (act === "barber") {
       draft.barberId = wizardButton.dataset.id
       draft.date = null
       draft.time = null
+      draft.availability = null
+      draft.availabilityKey = ""
       draft.step = 2
     } else if (act === "date") {
       draft.date = wizardButton.dataset.date
@@ -570,7 +640,14 @@ document.addEventListener("click", async (event) => {
       draft.useFree = phone.length >= 10 && loyaltyOf(phone).available > 0
       draft.step = 4
     } else if (act === "back") {
+      if (draft.step >= 3) {
+        draft.availability = null
+        draft.availabilityKey = ""
+      }
       draft.step = Math.max(0, draft.step - 1)
+    } else if (act === "retry") {
+      draft.availability = null
+      draft.availabilityKey = ""
     } else if (act === "switch-client") {
       draft.switching = true
       draft.name = ""
@@ -598,7 +675,7 @@ document.addEventListener("click", async (event) => {
   }
   const cancel = event.target.closest("[data-cancel]")
   if (cancel) {
-    const result = cancelByClient(cancel.dataset.cancel, getSession()?.phone || "")
+    const result = await cancelByClient(cancel.dataset.cancel, getSession()?.phone || "")
     if (!result.ok) app.error = result.error
     renderApp()
     return
@@ -614,9 +691,14 @@ document.addEventListener("click", async (event) => {
   }
   const statusBtn = event.target.closest("[data-status]")
   if (statusBtn) {
-    setStatus(statusBtn.dataset.id, statusBtn.dataset.status)
-    painelMsg = statusBtn.dataset.status === "concluido" ? "Presença marcada. O cartão foi atualizado." : "Agenda atualizada."
-    painelError = ""
+    const result = await setStatus(statusBtn.dataset.id, statusBtn.dataset.status)
+    if (!result.ok) {
+      painelError = result.error
+      painelMsg = ""
+    } else {
+      painelMsg = statusBtn.dataset.status === "concluido" ? "Presença marcada. O cartão foi atualizado." : "Agenda atualizada."
+      painelError = ""
+    }
     renderPainel()
     return
   }
@@ -629,15 +711,21 @@ document.addEventListener("click", async (event) => {
   }
   const painelAct = event.target.closest("#painel-root [data-act]")
   if (painelAct?.dataset.act === "wipe") {
-    if (confirm("Apagar todos os horários e carimbos guardados neste navegador?")) {
-      clearAppointments()
-      painelMsg = "Agenda zerada neste aparelho."
-      painelError = ""
+    if (confirm("Apagar todos os horários e carimbos da casa?")) {
+      const result = await clearAppointments()
+      if (!result.ok) {
+        painelError = result.error
+        painelMsg = ""
+      } else {
+        painelMsg = "Agenda zerada."
+        painelError = ""
+      }
       renderPainel()
     }
     return
   }
   if (painelAct?.dataset.act === "lock") {
+    await logoutPainel()
     painelOk = false
     sessionStorage.removeItem("ma-painel")
     renderPainel()
@@ -662,6 +750,11 @@ document.addEventListener("input", (event) => {
   if (event.target.name === "name" && event.target.closest("#confirm-form")) draft.name = event.target.value
   if (event.target.name === "phone" && event.target.closest("#confirm-form")) {
     draft.phone = event.target.value
+    const phone = digits(draft.phone)
+    if (phone.length >= 10) {
+      pullMine(phone).then(() => syncFreeSlot()).catch(() => syncFreeSlot())
+      return
+    }
     syncFreeSlot()
   }
   if (event.target.name === "free" && event.target.closest("#confirm-form")) {
@@ -675,7 +768,7 @@ document.addEventListener("submit", async (event) => {
     event.preventDefault()
     const data = new FormData(event.target)
     const freeBox = event.target.querySelector("input[name=free]")
-    const result = createAppointment({
+    const result = await createAppointment({
       clientName: data.get("name"),
       clientPhone: data.get("phone"),
       serviceId: draft.serviceId,
@@ -719,8 +812,9 @@ document.addEventListener("submit", async (event) => {
   if (event.target.id === "pin-form") {
     event.preventDefault()
     const pin = String(new FormData(event.target).get("pin") || "").trim().toLowerCase()
-    if (pin !== HOUSE.pin) {
-      painelError = "Código incorreto."
+    const result = await loginPainel(pin)
+    if (!result.ok) {
+      painelError = result.error
       renderPainel()
       return
     }
@@ -740,7 +834,7 @@ document.addEventListener("submit", async (event) => {
       serviceId: String(data.get("serviceId") || "classico"),
       barberId: String(data.get("barberId") || "cadeira-m"),
     }
-    const result = stampCuts({
+    const result = await stampCuts({
       name: prefill.name,
       phone: prefill.phone,
       serviceId: prefill.serviceId,
@@ -754,7 +848,12 @@ document.addEventListener("submit", async (event) => {
       renderPainel()
       return
     }
-    const info = loyaltyOf(prefill.phone)
+    try {
+      await pullPainel()
+    } catch {
+      /* a mensagem segue com o que já estiver na tela */
+    }
+    const info = loyaltyOf(digits(prefill.phone))
     painelError = ""
     painelMsg = data.get("free") === "on" ? "Cortesia carimbada." : `${result.count} corte(s) no cartão. ${loyaltyLine(info)}`
     renderPainel()

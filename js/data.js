@@ -6,7 +6,6 @@ export const HOUSE = {
   close: 20 * 60,
   slot: 30,
   loyaltyEvery: 10,
-  pin: "casa",
   place: "Vila Militar, ao lado do Condomínio Coqueiros de Itapuã",
   city: "Itapuã, Salvador — BA",
   mapsUrl:

@@ -1,4 +1,4 @@
-export const MURAL_URL = "https://crudcrud.com/api/2eb3684176ef4b4d938e0987bfd68698/mural"
+const MURAL_URL = "/api/mural"
 
 export const KINDS = {
   critica: "Crítica",
@@ -33,7 +33,6 @@ export async function postNote(note) {
       kind: note.kind,
       name: note.name,
       text: note.text,
-      createdAt: note.createdAt,
     }),
   })
   if (!response.ok) throw new Error("mural")
@@ -41,6 +40,6 @@ export async function postNote(note) {
 }
 
 export async function removeNote(id) {
-  const response = await request(`${MURAL_URL}/${id}`, { method: "DELETE" })
+  const response = await request(`/api/painel/notes/${id}`, { method: "DELETE" })
   if (!response.ok && response.status !== 404) throw new Error("mural")
 }
