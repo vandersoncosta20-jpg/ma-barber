@@ -1,4 +1,4 @@
-import { BARBERS, HOUSE, SERVICES } from "./data.js"
+import { HOUSE, SERVICES, bookableBarbers } from "./data.js"
 import { KINDS, fetchNotes, postNote, removeNote } from "./mural.js"
 import {
   barberById,
@@ -31,6 +31,7 @@ import {
   setSession,
   setStatus,
   stampCuts,
+  todayISO,
 } from "./store.js"
 
 const draft = {
@@ -58,7 +59,7 @@ let painelOk = sessionStorage.getItem("ma-painel") === "ok"
 let painelDate = ""
 let painelMsg = ""
 let painelError = ""
-let prefill = { name: "", phone: "", count: 1, serviceId: "classico", barberId: "cadeira-m" }
+let prefill = { name: "", phone: "", count: 1, serviceId: "classico", barberId: "cadeira-a" }
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -85,7 +86,13 @@ function fillBoards() {
   const preview = ["classico", "barba", "combo"].map((id) => serviceById(id))
   document.querySelector("#home-board").innerHTML = boardHtml(preview)
   document.querySelector("#full-board").innerHTML = boardHtml(SERVICES)
-  document.querySelector("#chair-list").innerHTML = BARBERS.map(
+  const when = document.querySelector("#when-copy")
+  const agenda = document.querySelector("#agenda-copy")
+  if (HOUSE.closedDates.includes(todayISO())) {
+    if (when) when.textContent = "Hoje a casa não abre. Nos outros dias, 9h às 20h. Domingo fechado."
+    if (agenda) agenda.textContent = "Hoje a casa não abre. Nos outros dias, segunda a sábado, das 9h às 20h."
+  }
+  document.querySelector("#chair-list").innerHTML = bookableBarbers().map(
     (barber) => `<article class="chair">
       <span class="monogram">${esc(barber.short)}</span>
       <span><strong>${esc(barber.name)}</strong><small>${esc(barber.specialty)}</small></span>
@@ -137,7 +144,7 @@ function stepBody() {
     ).join("")
   }
   if (draft.step === 1) {
-    return BARBERS.map(
+    return bookableBarbers().map(
       (barber) => `<button type="button" class="choice ${draft.barberId === barber.id ? "on" : ""}" data-act="barber" data-id="${barber.id}">
         <span class="monogram">${esc(barber.short)}</span>
         <span><strong>${esc(barber.name)}</strong><small>${esc(barber.specialty)}</small></span>
@@ -154,7 +161,8 @@ function stepBody() {
         </button>`
       })
       .join("")
-    return `<div class="day-scroller">${days}</div><p>Domingo a casa fecha. ${esc(HOUSE.place)}.</p>`
+    const todayClosed = HOUSE.closedDates.includes(todayISO()) ? " Hoje a casa não abre." : ""
+    return `<div class="day-scroller">${days}</div><p>Domingo a casa fecha.${esc(todayClosed)} ${esc(HOUSE.place)}.</p>`
   }
   if (draft.step === 3) {
     const slots = (draft.availability || []).find((day) => day.date === draft.date)?.slots || []
@@ -247,10 +255,28 @@ async function renderWizard() {
       if (gen !== wizardGen || !root.isConnected) return
     }
   }
-  const steps = ["Serviço", "Cadeira", "Dia", "Hora", "Confirmar"]
+  const steps =
+    bookableBarbers().length === 1
+      ? [
+          { step: 0, label: "Serviço" },
+          { step: 2, label: "Dia" },
+          { step: 3, label: "Hora" },
+          { step: 4, label: "Confirmar" },
+        ]
+      : [
+          { step: 0, label: "Serviço" },
+          { step: 1, label: "Cadeira" },
+          { step: 2, label: "Dia" },
+          { step: 3, label: "Hora" },
+          { step: 4, label: "Confirmar" },
+        ]
+  const current = steps.findIndex((item) => item.step === draft.step)
   root.innerHTML = `
     <ol class="stepper">${steps
-      .map((label, index) => `<li class="${index === draft.step ? "on" : index < draft.step ? "ok" : ""}">${label}</li>`)
+      .map(
+        (item, index) =>
+          `<li class="${index === current ? "on" : index < current ? "ok" : ""}">${item.label}</li>`,
+      )
       .join("")}</ol>
     ${draft.step > 0 ? `<button type="button" class="back" data-act="back">Voltar</button>` : ""}
     ${crumb()}
@@ -426,7 +452,7 @@ async function renderPainel() {
   if (gen !== painelGen) return
   if (!painelDate) painelDate = isoFromDate(new Date())
   const rows = reservationsOn(painelDate)
-  const closed = parseISO(painelDate).getDay() === 0
+  const closed = parseISO(painelDate).getDay() === 0 || HOUSE.closedDates.includes(painelDate)
   const list = rows.length
     ? rows
         .map((item) => {
@@ -446,7 +472,7 @@ async function renderPainel() {
           </article>`
         })
         .join("")
-    : `<p>${closed ? "Domingo a casa fecha." : "Nenhum horário nesta data."}</p>`
+    : `<p>${closed ? (parseISO(painelDate).getDay() === 0 ? "Domingo a casa fecha." : "Nesse dia a casa não abre.") : "Nenhum horário nesta data."}</p>`
   const people = clients()
   const roster = people.length
     ? people
@@ -483,7 +509,7 @@ async function renderPainel() {
           <label class="field">Nome<input name="name" required maxlength="60" value="${esc(prefill.name)}" /></label>
           <label class="field">Telefone<input name="phone" required inputmode="tel" maxlength="16" value="${esc(prefill.phone)}" /></label>
           <label class="field">Serviço<select name="serviceId">${SERVICES.map((service) => `<option value="${service.id}" ${prefill.serviceId === service.id ? "selected" : ""}>${esc(service.name)}</option>`).join("")}</select></label>
-          <label class="field">Cadeira<select name="barberId">${BARBERS.map((barber) => `<option value="${barber.id}" ${prefill.barberId === barber.id ? "selected" : ""}>${esc(barber.name)}</option>`).join("")}</select></label>
+          <label class="field">Cadeira<select name="barberId">${bookableBarbers().map((barber) => `<option value="${barber.id}" ${prefill.barberId === barber.id ? "selected" : ""}>${esc(barber.name)}</option>`).join("")}</select></label>
           <label class="field">Quantidade de cortes pagos<input name="count" type="number" min="1" max="30" value="${Number(prefill.count) || 1}" /></label>
           <label class="free-toggle"><input type="checkbox" name="free" /><span>Este é o corte grátis</span><small>Não soma nos dez. Só sai se já houver prêmio.</small></label>
           ${painelError ? `<p class="error">${esc(painelError)}</p>` : ""}
@@ -621,7 +647,9 @@ document.addEventListener("click", async (event) => {
       draft.time = null
       draft.availability = null
       draft.availabilityKey = ""
-      draft.step = 1
+      const only = bookableBarbers()
+      draft.barberId = only.length === 1 ? only[0].id : null
+      draft.step = only.length === 1 ? 2 : 1
       draft.done = null
     } else if (act === "barber") {
       draft.barberId = wizardButton.dataset.id
@@ -644,7 +672,8 @@ document.addEventListener("click", async (event) => {
         draft.availability = null
         draft.availabilityKey = ""
       }
-      draft.step = Math.max(0, draft.step - 1)
+      draft.step =
+        draft.step === 2 && bookableBarbers().length === 1 ? 0 : Math.max(0, draft.step - 1)
     } else if (act === "retry") {
       draft.availability = null
       draft.availabilityKey = ""
@@ -832,7 +861,7 @@ document.addEventListener("submit", async (event) => {
       phone: String(data.get("phone") || ""),
       count: Number(data.get("count") || 1),
       serviceId: String(data.get("serviceId") || "classico"),
-      barberId: String(data.get("barberId") || "cadeira-m"),
+      barberId: String(data.get("barberId") || "cadeira-a"),
     }
     const result = await stampCuts({
       name: prefill.name,
