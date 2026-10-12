@@ -547,7 +547,7 @@ async function handle(request, env, url) {
     }
     if (!isFuture(row.date, row.time)) return json({ error: "Esse horário já passou. Fala com a casa." }, 400)
     await env.DB.batch([
-      env.DB.prepare(`UPDATE appointments SET status = 'cancelado' WHERE id = ?`).bind(id),
+      env.DB.prepare(`UPDATE appointments SET status = 'cancelado', reason = 'cliente' WHERE id = ?`).bind(id),
       env.DB.prepare(`DELETE FROM holds WHERE appointment_id = ?`).bind(id),
       env.DB.prepare(`DELETE FROM client_holds WHERE appointment_id = ?`).bind(id),
     ])
@@ -683,7 +683,10 @@ async function handle(request, env, url) {
       return json({ error: "Escolhe o serviço e a cadeira." }, 400)
     }
     const freeCut = Boolean(body.data.freeCut)
-    const count = freeCut ? 1 : Math.max(1, Math.min(30, Number(body.data.count) || 1))
+    const count = freeCut ? 1 : Math.floor(Number(body.data.count) || 0)
+    if (!freeCut && (count < 1 || count > 30)) {
+      return json({ error: "Zero não entra no cartão. Lança só quem cortou." }, 400)
+    }
     if (freeCut && (await loyaltyAvailable(env, person.phone)) < 1) {
       return json({ error: "Esse cliente ainda não tem corte grátis." }, 400)
     }

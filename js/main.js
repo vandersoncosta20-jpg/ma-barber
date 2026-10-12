@@ -61,7 +61,7 @@ let painelOk = sessionStorage.getItem("ma-painel") === "ok"
 let painelDate = ""
 let painelMsg = ""
 let painelError = ""
-let prefill = { name: "", phone: "", count: 1, serviceId: "classico", barberId: "cadeira-a" }
+let prefill = { name: "", phone: "", count: 0, serviceId: "classico", barberId: "cadeira-a" }
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -339,7 +339,14 @@ function paidCountLine(phone) {
 function reasonText(reason) {
   if (reason === "pedido") return "a pedido dele"
   if (reason === "casa") return "eu marquei e desmarquei"
+  if (reason === "cliente") return "ele desmarcou"
   return ""
+}
+
+function paidShown(phone) {
+  const p = digits(phone)
+  if (p.length < 10) return 0
+  return loyaltyOf(p).paid
 }
 
 function visitHistory(phone) {
@@ -592,12 +599,13 @@ async function renderPainel() {
         <form id="stamp-form">
           <p class="section-kicker">Balcão</p>
           <h2>Carimbar corte</h2>
-          <p>Para quem cortou sem reserva, ou para lançar o histórico. Dez cortes pagos liberam um.</p>
+          <p>Quem não veio, pediu para desmarcar ou desmarcou fica em zero. Lançar só entra quando o corte aconteceu.</p>
           <label class="field">Nome<input name="name" required maxlength="60" value="${esc(prefill.name)}" /></label>
           <label class="field">Telefone<input name="phone" required inputmode="tel" maxlength="16" value="${esc(prefill.phone)}" /></label>
           <label class="field">Serviço<select name="serviceId">${SERVICES.map((service) => `<option value="${service.id}" ${prefill.serviceId === service.id ? "selected" : ""}>${esc(service.name)}</option>`).join("")}</select></label>
           <label class="field">Cadeira<select name="barberId">${bookableBarbers().map((barber) => `<option value="${barber.id}" ${prefill.barberId === barber.id ? "selected" : ""}>${esc(barber.name)}</option>`).join("")}</select></label>
-          <label class="field">Quantidade de cortes pagos<input name="count" type="number" min="1" max="30" value="${Number(prefill.count) || 1}" /></label>
+          <label class="field">Quantidade de cortes pagos<input id="paid-total" type="number" readonly value="${paidShown(prefill.phone)}" /></label>
+          <label class="field">Lançar agora<input name="count" type="number" min="0" max="30" value="${Number.isFinite(Number(prefill.count)) ? Number(prefill.count) : 0}" /></label>
           <label class="free-toggle"><input type="checkbox" name="free" /><span>Este é o corte grátis</span><small>Não soma nos dez. Só sai se já houver prêmio.</small></label>
           ${painelError ? `<p class="error">${esc(painelError)}</p>` : ""}
           <button class="btn btn-gold" type="submit">Lançar no cartão</button>
@@ -928,6 +936,10 @@ document.addEventListener("input", (event) => {
     }
     syncFreeSlot()
   }
+  if (event.target.name === "phone" && event.target.closest("#stamp-form")) {
+    const total = document.querySelector("#paid-total")
+    if (total) total.value = String(paidShown(event.target.value))
+  }
   if (event.target.name === "free" && event.target.closest("#confirm-form")) {
     draft.useFree = event.target.checked
     syncFreeSlot()
@@ -1024,9 +1036,9 @@ document.addEventListener("submit", async (event) => {
     } catch {
       /* a mensagem segue com o que já estiver na tela */
     }
-    const info = loyaltyOf(digits(prefill.phone))
     painelError = ""
-    painelMsg = data.get("free") === "on" ? "Cortesia carimbada." : `${result.count} corte(s) no cartão. ${loyaltyLine(info)}`
+    prefill.count = 0
+    painelMsg = data.get("free") === "on" ? "Cortesia carimbada." : `${result.count} corte(s) no cartão. ${paidCountLine(prefill.phone)}`
     renderPainel()
     return
   }
