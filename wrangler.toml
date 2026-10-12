@@ -1,6 +1,7 @@
 name = "ma-barber"
 main = "worker/index.js"
 compatibility_date = "2026-10-08"
+workers_dev = true
 
 [assets]
 directory = "./public"
@@ -10,4 +11,12 @@ run_worker_first = ["/api/*"]
 [[d1_databases]]
 binding = "DB"
 database_name = "ma-barber"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "98cd4bbc-86de-432d-b08f-da00f97583f1"
+
+[[routes]]
+pattern = "mabarber.com.br"
+custom_domain = true
+
+[[routes]]
+pattern = "www.mabarber.com.br"
+custom_domain = true
