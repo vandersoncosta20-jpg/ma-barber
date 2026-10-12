@@ -193,7 +193,7 @@ function slotOnGrid(time, serviceId) {
 async function takenBetween(env, barberId, from, to) {
   const { results } = await env.DB.prepare(
     `SELECT date, time, service_id FROM appointments
-     WHERE kind = 'reserva' AND status != 'cancelado' AND barber_id = ? AND date >= ? AND date <= ?`,
+     WHERE kind IN ('reserva', 'bloqueio') AND status != 'cancelado' AND barber_id = ? AND date >= ? AND date <= ?`,
   )
     .bind(barberId, from, to)
     .all()
@@ -205,7 +205,7 @@ async function loyaltyAvailable(env, phone) {
     `SELECT
        SUM(CASE WHEN status = 'concluido' AND free_cut = 0 THEN 1 ELSE 0 END) AS paid,
        SUM(CASE WHEN free_cut = 1 AND status != 'cancelado' THEN 1 ELSE 0 END) AS reserved
-     FROM appointments WHERE client_phone = ?`,
+     FROM appointments WHERE client_phone = ? AND kind != 'bloqueio'`,
   )
     .bind(phone)
     .first()
@@ -259,6 +259,101 @@ async function insertReserva(env, appt) {
     ),
   )
   await env.DB.batch(stmts)
+}
+
+async function closeSlot(env, date, time, barberId) {
+  const taken = await takenBetween(env, barberId, date, date)
+  if (takenConflict(taken, time, "classico")) return json({ error: "Esse horário já está ocupado." }, 409)
+  const id = crypto.randomUUID()
+  const start = timeToMin(time)
+  try {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO appointments (
+          id, client_name, client_phone, service_id, barber_id, date, time, status, free_cut, kind, created_at
+        ) VALUES (?, 'Casa', '0000000000', 'classico', ?, ?, ?, 'agendado', 0, 'bloqueio', ?)`,
+      ).bind(id, barberId, date, time, new Date().toISOString()),
+      env.DB.prepare(`INSERT INTO holds (date, barber_id, start_min, appointment_id) VALUES (?, ?, ?, ?)`).bind(
+        date,
+        barberId,
+        start,
+        id,
+      ),
+    ])
+  } catch (error) {
+    if (isConstraint(error)) return json({ error: "Esse horário já está ocupado." }, 409)
+    throw error
+  }
+  return json({ ok: true, count: 1 })
+}
+
+async function openSlot(env, date, time, barberId) {
+  const row = await env.DB.prepare(
+    `SELECT id FROM appointments
+     WHERE kind = 'bloqueio' AND status != 'cancelado' AND barber_id = ? AND date = ? AND time = ?`,
+  )
+    .bind(barberId, date, time)
+    .first()
+  if (!row) return json({ error: "Esse horário já está aberto." }, 404)
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE appointments SET status = 'cancelado' WHERE id = ?`).bind(row.id),
+    env.DB.prepare(`DELETE FROM holds WHERE appointment_id = ?`).bind(row.id),
+  ])
+  return json({ ok: true, count: 1 })
+}
+
+async function closeFreeSlots(env, date, barberId) {
+  const taken = await takenBetween(env, barberId, date, date)
+  const stmts = []
+  let count = 0
+  for (let start = HOUSE.open; start + HOUSE.slot <= HOUSE.close; start += HOUSE.slot) {
+    const time = minToTime(start)
+    if (takenConflict(taken, time, "classico")) continue
+    const id = crypto.randomUUID()
+    count += 1
+    stmts.push(
+      env.DB.prepare(
+        `INSERT INTO appointments (
+          id, client_name, client_phone, service_id, barber_id, date, time, status, free_cut, kind, created_at
+        ) VALUES (?, 'Casa', '0000000000', 'classico', ?, ?, ?, 'agendado', 0, 'bloqueio', ?)`,
+      ).bind(id, barberId, date, time, new Date().toISOString()),
+    )
+    stmts.push(
+      env.DB.prepare(`INSERT INTO holds (date, barber_id, start_min, appointment_id) VALUES (?, ?, ?, ?)`).bind(
+        date,
+        barberId,
+        start,
+        id,
+      ),
+    )
+  }
+  if (count) {
+    try {
+      await env.DB.batch(stmts)
+    } catch (error) {
+      if (isConstraint(error)) return json({ error: "Um desses horários acabou de sair." }, 409)
+      throw error
+    }
+  }
+  return json({ ok: true, count })
+}
+
+async function openHouseSlots(env, date, barberId) {
+  const { results } = await env.DB.prepare(
+    `SELECT id FROM appointments
+     WHERE kind = 'bloqueio' AND status != 'cancelado' AND barber_id = ? AND date = ?`,
+  )
+    .bind(barberId, date)
+    .all()
+  const rows = results || []
+  if (!rows.length) return json({ ok: true, count: 0 })
+  const stmts = []
+  for (const row of rows) {
+    stmts.push(env.DB.prepare(`UPDATE appointments SET status = 'cancelado' WHERE id = ?`).bind(row.id))
+    stmts.push(env.DB.prepare(`DELETE FROM holds WHERE appointment_id = ?`).bind(row.id))
+  }
+  await env.DB.batch(stmts)
+  return json({ ok: true, count: rows.length })
 }
 
 function isConstraint(error) {
@@ -610,6 +705,23 @@ async function handle(request, env, url) {
     }
     await env.DB.batch(stmts)
     return json({ ok: true, count })
+  }
+
+  if (path === "/api/painel/block" && request.method === "POST") {
+    const body = await readJson(request)
+    if (!body.ok) return json({ error: body.error }, body.status)
+    const date = String(body.data.date || "")
+    const time = String(body.data.time || "")
+    const barberId = String(body.data.barberId || "")
+    const closed = Boolean(body.data.closed)
+    const all = Boolean(body.data.all)
+    if (!validDate(date)) return json({ error: "Escolhe um dia da agenda." }, 400)
+    if (weekday(date) === 0) return json({ error: "Domingo a casa fecha." }, 400)
+    if (HOUSE.closedDates.includes(date)) return json({ error: "Nesse dia a casa não abre." }, 400)
+    if (!bookableById(barberId)) return json({ error: "Escolhe a cadeira." }, 400)
+    if (all) return closed ? closeFreeSlots(env, date, barberId) : openHouseSlots(env, date, barberId)
+    if (!slotOnGrid(time, "classico")) return json({ error: "Esse horário não entra na grade." }, 400)
+    return closed ? closeSlot(env, date, time, barberId) : openSlot(env, date, time, barberId)
   }
 
   if (path === "/api/painel/wipe" && request.method === "POST") {

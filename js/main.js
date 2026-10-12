@@ -32,6 +32,8 @@ import {
   setStatus,
   stampCuts,
   todayISO,
+  blocksOn,
+  setHouseSlot,
 } from "./store.js"
 
 const draft = {
@@ -420,6 +422,49 @@ function shiftDate(iso, delta) {
   return isoFromDate(date)
 }
 
+function dayTimes() {
+  const times = []
+  for (let start = HOUSE.open; start + HOUSE.slot <= HOUSE.close; start += HOUSE.slot) {
+    const hour = Math.floor(start / 60)
+    const minute = start % 60
+    times.push(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`)
+  }
+  return times
+}
+
+function houseSlots(dayClosed) {
+  if (dayClosed) {
+    return `<section class="slot-board"><p>Nesse dia a casa não abre. Passe para outro dia para fechar um horário.</p></section>`
+  }
+  const chair = bookableBarbers()[0]
+  if (!chair) return ""
+  const reserved = new Set(
+    reservationsOn(painelDate)
+      .filter((item) => item.status !== "cancelado" && item.barberId === chair.id)
+      .map((item) => item.time),
+  )
+  const blocked = new Set(blocksOn(painelDate).filter((item) => item.barberId === chair.id).map((item) => item.time))
+  const chips = dayTimes()
+    .map((time) => {
+      if (reserved.has(time)) return `<button type="button" class="time-chip" disabled>${time} ocupado</button>`
+      if (blocked.has(time)) {
+        return `<button type="button" class="time-chip shut" data-slot="open" data-time="${time}">${time} abrir</button>`
+      }
+      return `<button type="button" class="time-chip" data-slot="close" data-time="${time}">${time} fechar</button>`
+    })
+    .join("")
+  return `<section class="slot-board">
+      <p class="section-kicker">Comandos do dia</p>
+      <h2>Fechar horário</h2>
+      <p>O horário fechado sai da agenda do cliente. Abrir devolve o espaço. Cliente marcado fica como está.</p>
+      <div class="time-grid">${chips}</div>
+      <div class="row-actions">
+        <button type="button" class="btn btn-ghost" data-act="close-free">Fechar os livres</button>
+        <button type="button" class="btn btn-ghost" data-act="open-closed">Abrir os que fechei</button>
+      </div>
+    </section>`
+}
+
 async function renderPainel() {
   const root = document.querySelector("#painel-root")
   const gen = ++painelGen
@@ -458,15 +503,21 @@ async function renderPainel() {
         .map((item) => {
           const service = serviceById(item.serviceId)
           const barber = barberById(item.barberId)
+          const label =
+            item.status === "cancelado" ? "desmarcado" : item.status === "concluido" ? "veio" : "marcado"
           const actions =
-            item.status === "agendado"
-              ? `<button type="button" class="btn btn-gold" data-status="concluido" data-id="${item.id}">Veio</button>
-                 <button type="button" class="btn btn-ghost" data-status="cancelado" data-id="${item.id}">Não veio</button>`
-              : `<button type="button" class="btn btn-ghost" data-status="agendado" data-id="${item.id}">Reabrir</button>`
+            item.status === "cancelado"
+              ? `<button type="button" class="btn btn-ghost" data-status="agendado" data-id="${item.id}">Marcar de novo</button>`
+              : `${
+                  item.status === "agendado"
+                    ? `<button type="button" class="btn btn-gold" data-status="concluido" data-id="${item.id}">Veio</button>`
+                    : ""
+                }
+                 <button type="button" class="btn btn-ghost" data-status="cancelado" data-id="${item.id}">Desmarcar</button>`
           return `<article class="appt ${item.status}">
             <strong>${esc(item.time)} · ${esc(service?.name || "")}</strong>
             <p>${esc(item.clientName)} · ${esc(formatPhone(item.clientPhone))}</p>
-            <p>${esc(barber?.name || "")}${item.freeCut ? " · cortesia" : ""} · <span class="tag">${item.status}</span></p>
+            <p>${esc(barber?.name || "")}${item.freeCut ? " · cortesia" : ""} · <span class="tag">${label}</span></p>
             <p>${esc(loyaltyLine(loyaltyOf(item.clientPhone)))} ${miniStamps(item.clientPhone)}</p>
             <div class="row-actions">${actions}</div>
           </article>`
@@ -499,6 +550,7 @@ async function renderPainel() {
           <strong>${esc(formatLong(painelDate))}</strong>
           <button type="button" class="btn btn-ghost" data-shift="1">Próximo dia</button>
         </div>
+        ${houseSlots(closed)}
         ${list}
       </div>
       <div>
@@ -725,7 +777,12 @@ document.addEventListener("click", async (event) => {
       painelError = result.error
       painelMsg = ""
     } else {
-      painelMsg = statusBtn.dataset.status === "concluido" ? "Presença marcada. O cartão foi atualizado." : "Agenda atualizada."
+      painelMsg =
+        statusBtn.dataset.status === "concluido"
+          ? "Presença marcada. O cartão foi atualizado."
+          : statusBtn.dataset.status === "cancelado"
+            ? "Horário desmarcado. Esse corte saiu da contagem."
+            : "Horário marcado de novo."
       painelError = ""
     }
     renderPainel()
@@ -738,7 +795,53 @@ document.addEventListener("click", async (event) => {
     renderPainel()
     return
   }
+  const slotBtn = event.target.closest("[data-slot]")
+  if (slotBtn) {
+    const chair = bookableBarbers()[0]
+    const result = await setHouseSlot({
+      date: painelDate,
+      time: slotBtn.dataset.time,
+      barberId: chair?.id,
+      closed: slotBtn.dataset.slot === "close",
+    })
+    if (!result.ok) {
+      painelError = result.error
+      painelMsg = ""
+    } else {
+      painelMsg = slotBtn.dataset.slot === "close" ? "Horário fechado." : "Horário aberto de novo."
+      painelError = ""
+    }
+    renderPainel()
+    return
+  }
+
   const painelAct = event.target.closest("#painel-root [data-act]")
+  if (painelAct?.dataset.act === "close-free" || painelAct?.dataset.act === "open-closed") {
+    const closing = painelAct.dataset.act === "close-free"
+    const ask = closing
+      ? "Fechar todos os horários livres deste dia?"
+      : "Abrir os horários que a casa fechou neste dia?"
+    if (!confirm(ask)) return
+    const chair = bookableBarbers()[0]
+    const result = await setHouseSlot({
+      date: painelDate,
+      barberId: chair?.id,
+      closed: closing,
+      all: true,
+    })
+    if (!result.ok) {
+      painelError = result.error
+      painelMsg = ""
+    } else if (closing) {
+      painelMsg = result.count ? `${result.count} horários fechados.` : "Não havia horário livre para fechar."
+      painelError = ""
+    } else {
+      painelMsg = result.count ? `${result.count} horários abertos de novo.` : "Não havia horário fechado pela casa."
+      painelError = ""
+    }
+    renderPainel()
+    return
+  }
   if (painelAct?.dataset.act === "wipe") {
     if (confirm("Apagar todos os horários e carimbos da casa?")) {
       const result = await clearAppointments()
