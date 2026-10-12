@@ -302,11 +302,11 @@ export async function createAppointment(input) {
   return { ok: true, appointment: data.appointment }
 }
 
-export async function setStatus(id, status) {
+export async function setStatus(id, status, reason = "") {
   const response = await fetch("/api/painel/status", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id, status }),
+    body: JSON.stringify({ id, status, reason }),
   })
   const data = await readBody(response)
   if (!response.ok) return { ok: false, error: data.error || "Não consegui atualizar." }

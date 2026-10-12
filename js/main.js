@@ -331,6 +331,30 @@ function miniStamps(phone) {
   return `<span class="mini-stamps">${Array.from({ length: info.every }, (_, index) => `<i class="${index < info.progress ? "on" : ""}"></i>`).join("")}</span>`
 }
 
+function paidCountLine(phone) {
+  const n = loyaltyOf(phone).paid
+  return n === 1 ? "1 corte pago" : `${n} cortes pagos`
+}
+
+function reasonText(reason) {
+  if (reason === "pedido") return "a pedido dele"
+  if (reason === "casa") return "eu marquei e desmarquei"
+  return ""
+}
+
+function visitHistory(phone) {
+  return getAppointments()
+    .filter((item) => item.clientPhone === digits(phone) && item.kind !== "bloqueio")
+    .sort((a, b) => (b.date + (b.time || "")).localeCompare(a.date + (a.time || "")))
+}
+
+function visitLine(item) {
+  const label = item.status === "cancelado" ? "desmarcado" : item.status === "concluido" ? "veio" : "marcado"
+  const why = item.status === "cancelado" ? reasonText(item.reason) : ""
+  const clock = item.time && item.time !== "--" ? ` · ${item.time}` : ""
+  return `${formatLong(item.date)}${clock} · ${label}${why ? ` · ${why}` : ""}`
+}
+
 async function renderApp() {
   const gen = ++appGen
   const body = document.querySelector("#app-body")
@@ -505,20 +529,25 @@ async function renderPainel() {
           const barber = barberById(item.barberId)
           const label =
             item.status === "cancelado" ? "desmarcado" : item.status === "concluido" ? "veio" : "marcado"
+          const why = item.status === "cancelado" ? reasonText(item.reason) : ""
+          const unmark = `<button type="button" class="btn btn-ghost" data-status="cancelado" data-reason="pedido" data-id="${item.id}">A pedido dele</button>
+                <button type="button" class="btn btn-ghost" data-status="cancelado" data-reason="casa" data-id="${item.id}">Marquei e desmarquei</button>`
           const actions =
-            item.status === "cancelado"
+            item.status === "cancelado" && why
               ? `<button type="button" class="btn btn-ghost" data-status="agendado" data-id="${item.id}">Marcar de novo</button>`
               : `${
                   item.status === "agendado"
                     ? `<button type="button" class="btn btn-gold" data-status="concluido" data-id="${item.id}">Veio</button>`
-                    : ""
+                    : item.status === "cancelado"
+                      ? `<button type="button" class="btn btn-ghost" data-status="agendado" data-id="${item.id}">Marcar de novo</button>`
+                      : ""
                 }
-                 <button type="button" class="btn btn-ghost" data-status="cancelado" data-id="${item.id}">Desmarcar</button>`
+                ${unmark}`
           return `<article class="appt ${item.status}">
             <strong>${esc(item.time)} · ${esc(service?.name || "")}</strong>
             <p>${esc(item.clientName)} · ${esc(formatPhone(item.clientPhone))}</p>
-            <p>${esc(barber?.name || "")}${item.freeCut ? " · cortesia" : ""} · <span class="tag">${label}</span></p>
-            <p>${esc(loyaltyLine(loyaltyOf(item.clientPhone)))} ${miniStamps(item.clientPhone)}</p>
+            <p>${esc(barber?.name || "")}${item.freeCut ? " · cortesia" : ""} · <span class="tag">${label}</span>${why ? ` · ${esc(why)}` : ""}</p>
+            <p>${esc(paidCountLine(item.clientPhone))} ${miniStamps(item.clientPhone)}</p>
             <div class="row-actions">${actions}</div>
           </article>`
         })
@@ -528,12 +557,18 @@ async function renderPainel() {
   const roster = people.length
     ? people
         .map(
-          (person) => `<article class="person">
+          (person) => {
+            const history = visitHistory(person.phone)
+              .map((item) => `<li>${esc(visitLine(item))}</li>`)
+              .join("")
+            return `<article class="person">
             <strong>${esc(person.name)}</strong>
-            <p>${esc(formatPhone(person.phone))} · ${esc(loyaltyLine(loyaltyOf(person.phone)))}</p>
+            <p>${esc(formatPhone(person.phone))} · ${esc(paidCountLine(person.phone))}</p>
             ${miniStamps(person.phone)}
+            ${history ? `<ul class="visit-history">${history}</ul>` : ""}
             <button type="button" class="text-btn" data-use-client="${esc(person.phone)}" data-use-name="${esc(person.name)}">Usar no carimbo</button>
-          </article>`,
+          </article>`
+          },
         )
         .join("")
     : `<p>Nenhum cliente ainda.</p>`
@@ -772,17 +807,21 @@ document.addEventListener("click", async (event) => {
   }
   const statusBtn = event.target.closest("[data-status]")
   if (statusBtn) {
-    const result = await setStatus(statusBtn.dataset.id, statusBtn.dataset.status)
+    const result = await setStatus(statusBtn.dataset.id, statusBtn.dataset.status, statusBtn.dataset.reason || "")
     if (!result.ok) {
       painelError = result.error
       painelMsg = ""
-    } else {
+    } else if (statusBtn.dataset.status === "concluido") {
+      painelMsg = "Presença marcada. Esse corte entrou na contagem."
+      painelError = ""
+    } else if (statusBtn.dataset.status === "cancelado") {
       painelMsg =
-        statusBtn.dataset.status === "concluido"
-          ? "Presença marcada. O cartão foi atualizado."
-          : statusBtn.dataset.status === "cancelado"
-            ? "Horário desmarcado. Esse corte saiu da contagem."
-            : "Horário marcado de novo."
+        statusBtn.dataset.reason === "casa"
+          ? "Anotado: você marcou e desmarcou. Esse corte não conta."
+          : "Anotado: desmarcado a pedido dele. Esse corte não conta."
+      painelError = ""
+    } else {
+      painelMsg = "Horário marcado de novo."
       painelError = ""
     }
     renderPainel()

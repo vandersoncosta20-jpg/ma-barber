@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS appointments (
   status TEXT NOT NULL,
   free_cut INTEGER NOT NULL DEFAULT 0,
   kind TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
 

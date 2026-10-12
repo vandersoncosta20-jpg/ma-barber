@@ -127,8 +127,8 @@ function isFuture(date, time) {
   return start > now.hour * 60 + now.minute
 }
 
-function rowToAppt(row) {
-  return {
+function rowToAppt(row, staff = false) {
+  const appt = {
     id: row.id,
     clientName: row.client_name,
     clientPhone: row.client_phone,
@@ -141,6 +141,8 @@ function rowToAppt(row) {
     kind: row.kind,
     createdAt: row.created_at,
   }
+  if (staff) appt.reason = row.reason || ""
+  return appt
 }
 
 function holdStarts(time, serviceId) {
@@ -619,7 +621,7 @@ async function handle(request, env, url) {
 
   if (path === "/api/painel/appointments" && request.method === "GET") {
     const { results } = await env.DB.prepare(`SELECT * FROM appointments ORDER BY date, time, barber_id LIMIT 5000`).all()
-    return json({ appointments: (results || []).map(rowToAppt) })
+    return json({ appointments: (results || []).map((row) => rowToAppt(row, true)) })
   }
 
   if (path === "/api/painel/status" && request.method === "POST") {
@@ -631,15 +633,17 @@ async function handle(request, env, url) {
     const row = await env.DB.prepare(`SELECT * FROM appointments WHERE id = ?`).bind(id).first()
     if (!row) return json({ error: "Horário não encontrado." }, 404)
     if (status === "cancelado") {
+      const reason = String(body.data.reason || "")
+      if (reason !== "pedido" && reason !== "casa") return json({ error: "Escolhe o motivo." }, 400)
       await env.DB.batch([
-        env.DB.prepare(`UPDATE appointments SET status = 'cancelado' WHERE id = ?`).bind(id),
+        env.DB.prepare(`UPDATE appointments SET status = 'cancelado', reason = ? WHERE id = ?`).bind(reason, id),
         env.DB.prepare(`DELETE FROM holds WHERE appointment_id = ?`).bind(id),
         env.DB.prepare(`DELETE FROM client_holds WHERE appointment_id = ?`).bind(id),
       ])
       return json({ ok: true })
     }
     if (status === "agendado" && row.status === "cancelado" && row.kind === "reserva") {
-      const stmts = [env.DB.prepare(`UPDATE appointments SET status = 'agendado' WHERE id = ?`).bind(id)]
+      const stmts = [env.DB.prepare(`UPDATE appointments SET status = 'agendado', reason = '' WHERE id = ?`).bind(id)]
       for (const start of holdStarts(row.time, row.service_id)) {
         stmts.push(
           env.DB.prepare(`INSERT INTO holds (date, barber_id, start_min, appointment_id) VALUES (?, ?, ?, ?)`).bind(
@@ -666,7 +670,7 @@ async function handle(request, env, url) {
       }
       return json({ ok: true })
     }
-    await env.DB.prepare(`UPDATE appointments SET status = ? WHERE id = ?`).bind(status, id).run()
+    await env.DB.prepare(`UPDATE appointments SET status = ?, reason = '' WHERE id = ?`).bind(status, id).run()
     return json({ ok: true })
   }
 
