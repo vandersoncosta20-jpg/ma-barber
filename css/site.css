@@ -328,7 +328,9 @@ p { margin: 0 0 0.9em; color: var(--muted); }
 }
 .day-chip, .time-chip { min-width: 74px; padding: 10px 8px; }
 .day-chip { display: grid; justify-items: center; }
-.day-chip small, .time-chip { font-size: 0.82rem; }
+.time-chip.shut { border-color: var(--gold); color: var(--gold); }
+.slot-board { margin: 8px 0 22px; }
+.slot-board .row-actions { margin-top: 12px; }
 .day-chip strong { font-size: 1.15rem; }
 button:disabled { opacity: 0.38; cursor: not-allowed; }
 .back {

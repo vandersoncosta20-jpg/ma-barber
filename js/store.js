@@ -350,9 +350,33 @@ export function reservationsOn(date) {
     .sort((a, b) => a.time.localeCompare(b.time) || a.barberId.localeCompare(b.barberId))
 }
 
+export function blocksOn(date) {
+  return appointments.filter(
+    (item) => item.kind === "bloqueio" && item.status !== "cancelado" && item.date === date,
+  )
+}
+
+export async function setHouseSlot(input) {
+  const response = await fetch("/api/painel/block", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      date: input.date,
+      time: input.time || "",
+      barberId: input.barberId,
+      closed: Boolean(input.closed),
+      all: Boolean(input.all),
+    }),
+  })
+  const data = await readBody(response)
+  if (!response.ok) return { ok: false, error: data.error || "Não consegui mexer nesse horário." }
+  return { ok: true, count: Number(data.count || 0) }
+}
+
 export function clients() {
   const map = new Map()
   for (const item of appointments) {
+    if (item.kind === "bloqueio") continue
     const prev = map.get(item.clientPhone)
     if (!prev || item.createdAt > prev.last) {
       map.set(item.clientPhone, { phone: item.clientPhone, name: item.clientName, last: item.createdAt })
