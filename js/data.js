@@ -5,6 +5,7 @@ export const HOUSE = {
   open: 9 * 60,
   close: 20 * 60,
   slot: 30,
+  closedDates: ["2026-10-12"],
   loyaltyEvery: 10,
   place: "Vila Militar, ao lado do Condomínio Coqueiros de Itapuã",
   city: "Itapuã, Salvador — BA",
@@ -17,7 +18,7 @@ export const SERVICES = [
   {
     id: "classico",
     name: "Corte",
-    minutes: 45,
+    minutes: 30,
     price: 35,
     detail: "Tesoura e máquina, com acabamento na nuca.",
   },
@@ -31,35 +32,35 @@ export const SERVICES = [
   {
     id: "combo",
     name: "Cabelo e barba",
-    minutes: 75,
+    minutes: 30,
     price: 58,
     detail: "Corte e barba no mesmo horário.",
   },
   {
     id: "cabelo-sobrancelha",
     name: "Cabelo e sobrancelha",
-    minutes: 45,
+    minutes: 30,
     price: 50,
     detail: "Corte com a sobrancelha.",
   },
   {
     id: "combo-sobrancelha",
     name: "Combo mais sobrancelha",
-    minutes: 75,
+    minutes: 30,
     price: 65,
     detail: "Cabelo, barba e sobrancelha.",
   },
   {
     id: "sobrancelha",
     name: "Sobrancelha",
-    minutes: 20,
+    minutes: 30,
     price: 20,
     detail: "Só a sobrancelha.",
   },
   {
     id: "pezinho",
     name: "Pezinho",
-    minutes: 20,
+    minutes: 30,
     price: 20,
     detail: "Acabamento do pezinho.",
   },
@@ -74,15 +75,20 @@ export const SERVICES = [
 
 export const BARBERS = [
   {
+    id: "cadeira-a",
+    name: "Cadeira A",
+    short: "A",
+    specialty: "Corte, barba, pezinho e sobrancelha.",
+  },
+  {
     id: "cadeira-m",
     name: "Cadeira M",
     short: "M",
     specialty: "Corte, pezinho e sobrancelha.",
-  },
-  {
-    id: "cadeira-a",
-    name: "Cadeira A",
-    short: "A",
-    specialty: "Barba e cabelo com barba.",
+    retired: true,
   },
 ]
+
+export function bookableBarbers() {
+  return BARBERS.filter((barber) => !barber.retired)
+}

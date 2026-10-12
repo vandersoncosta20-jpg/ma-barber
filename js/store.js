@@ -83,10 +83,8 @@ function minToTime(mins) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
 }
 
-export function blockedMinutes(serviceId) {
-  const service = serviceById(serviceId)
-  const real = service ? service.minutes : HOUSE.slot
-  return Math.ceil(real / HOUSE.slot) * HOUSE.slot
+export function blockedMinutes() {
+  return HOUSE.slot
 }
 
 function overlap(aStart, aBlock, bStart, bBlock) {
@@ -216,7 +214,8 @@ export function openDates(count = 18) {
   const cursor = new Date()
   cursor.setHours(12, 0, 0, 0)
   for (let i = 0; i < 60 && days.length < count; i += 1) {
-    if (cursor.getDay() !== 0) days.push(isoFromDate(cursor))
+    const iso = isoFromDate(cursor)
+    if (cursor.getDay() !== 0 && !HOUSE.closedDates.includes(iso)) days.push(iso)
     cursor.setDate(cursor.getDate() + 1)
   }
   return days
@@ -224,7 +223,7 @@ export function openDates(count = 18) {
 
 export function slotsFor(date, barberId, serviceId) {
   const day = parseISO(date)
-  if (day.getDay() === 0) return []
+  if (day.getDay() === 0 || HOUSE.closedDates.includes(date)) return []
   const block = blockedMinutes(serviceId)
   const taken = appointments.filter(
     (item) =>
@@ -267,11 +266,15 @@ function validPerson(name, phone) {
 export async function createAppointment(input) {
   const person = validPerson(input.clientName, input.clientPhone)
   if (!person.ok) return person
-  if (!serviceById(input.serviceId) || !barberById(input.barberId)) {
+  const barber = barberById(input.barberId)
+  if (!serviceById(input.serviceId) || !barber || barber.retired) {
     return { ok: false, error: "Escolhe o serviço e a cadeira." }
   }
   if (parseISO(input.date).getDay() === 0) {
     return { ok: false, error: "Domingo a casa fecha." }
+  }
+  if (HOUSE.closedDates.includes(input.date)) {
+    return { ok: false, error: "Nesse dia a casa não abre." }
   }
   let response
   try {

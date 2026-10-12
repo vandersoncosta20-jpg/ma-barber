@@ -1,4 +1,4 @@
-import { BARBERS, HOUSE, SERVICES } from "../js/data.js"
+import { BARBERS, HOUSE, SERVICES, bookableBarbers } from "../js/data.js"
 
 const KINDS = new Set(["critica", "opiniao", "elogio"])
 
@@ -40,10 +40,8 @@ function minToTime(mins) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
 }
 
-function blockedMinutes(serviceId) {
-  const service = serviceById(serviceId)
-  const real = service ? service.minutes : HOUSE.slot
-  return Math.ceil(real / HOUSE.slot) * HOUSE.slot
+function blockedMinutes() {
+  return HOUSE.slot
 }
 
 function overlap(aStart, aBlock, bStart, bBlock) {
@@ -96,11 +94,15 @@ function addDays(iso, days) {
   return `${date.getUTCFullYear()}-${month}-${day}`
 }
 
+function bookableById(id) {
+  return bookableBarbers().find((item) => item.id === id) || null
+}
+
 function openDates(count = 18) {
   const days = []
   let cursor = todayISO()
   for (let i = 0; i < 60 && days.length < count; i += 1) {
-    if (weekday(cursor) !== 0) days.push(cursor)
+    if (weekday(cursor) !== 0 && !HOUSE.closedDates.includes(cursor)) days.push(cursor)
     cursor = addDays(cursor, 1)
   }
   return days
@@ -168,7 +170,7 @@ async function readJson(request) {
 }
 
 function slotsForDay(date, serviceId, taken) {
-  if (weekday(date) === 0) return []
+  if (weekday(date) === 0 || HOUSE.closedDates.includes(date)) return []
   const block = blockedMinutes(serviceId)
   const slots = []
   for (let start = HOUSE.open; start + block <= HOUSE.close; start += HOUSE.slot) {
@@ -355,7 +357,7 @@ async function handle(request, env, url) {
   if (path === "/api/availability" && request.method === "GET") {
     const barberId = url.searchParams.get("barberId")
     const serviceId = url.searchParams.get("serviceId")
-    if (!barberById(barberId) || !serviceById(serviceId)) {
+    if (!bookableById(barberId) || !serviceById(serviceId)) {
       return json({ error: "Escolhe o serviço e a cadeira." }, 400)
     }
     const days = openDates(18)
@@ -376,12 +378,13 @@ async function handle(request, env, url) {
     if (!body.ok) return json({ error: body.error }, body.status)
     const person = validPerson(body.data.clientName, body.data.clientPhone)
     if (!person.ok) return json({ error: person.error }, 400)
-    if (!serviceById(body.data.serviceId) || !barberById(body.data.barberId)) {
+    if (!serviceById(body.data.serviceId) || !bookableById(body.data.barberId)) {
       return json({ error: "Escolhe o serviço e a cadeira." }, 400)
     }
     const date = String(body.data.date || "")
     const time = String(body.data.time || "")
     if (!validDate(date) || weekday(date) === 0) return json({ error: "Domingo a casa fecha." }, 400)
+    if (HOUSE.closedDates.includes(date)) return json({ error: "Nesse dia a casa não abre." }, 400)
     if (!openDates(18).includes(date)) return json({ error: "Escolhe um dia da agenda." }, 400)
     if (!slotOnGrid(time, body.data.serviceId) || isPastSlot(date, time)) {
       return json({ error: "Esse horário acabou de sair. Escolhe outro." }, 409)
@@ -577,7 +580,7 @@ async function handle(request, env, url) {
     if (!body.ok) return json({ error: body.error }, body.status)
     const person = validPerson(body.data.name, body.data.phone)
     if (!person.ok) return json({ error: person.error }, 400)
-    if (!serviceById(body.data.serviceId) || !barberById(body.data.barberId)) {
+    if (!serviceById(body.data.serviceId) || !bookableById(body.data.barberId)) {
       return json({ error: "Escolhe o serviço e a cadeira." }, 400)
     }
     const freeCut = Boolean(body.data.freeCut)
