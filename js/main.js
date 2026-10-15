@@ -1,4 +1,4 @@
-import { BARBERS, HOUSE, SERVICES } from "./data.js"
+import { HOUSE, SERVICES, bookableBarbers } from "./data.js"
 import { KINDS, fetchNotes, postNote, removeNote } from "./mural.js"
 import {
   barberById,
@@ -31,6 +31,9 @@ import {
   setSession,
   setStatus,
   stampCuts,
+  todayISO,
+  blocksOn,
+  setHouseSlot,
 } from "./store.js"
 
 const draft = {
@@ -58,7 +61,7 @@ let painelOk = sessionStorage.getItem("ma-painel") === "ok"
 let painelDate = ""
 let painelMsg = ""
 let painelError = ""
-let prefill = { name: "", phone: "", count: 1, serviceId: "classico", barberId: "cadeira-m" }
+let prefill = { name: "", phone: "", count: 0, serviceId: "classico", barberId: "cadeira-a" }
 
 function esc(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -85,7 +88,13 @@ function fillBoards() {
   const preview = ["classico", "barba", "combo"].map((id) => serviceById(id))
   document.querySelector("#home-board").innerHTML = boardHtml(preview)
   document.querySelector("#full-board").innerHTML = boardHtml(SERVICES)
-  document.querySelector("#chair-list").innerHTML = BARBERS.map(
+  const when = document.querySelector("#when-copy")
+  const agenda = document.querySelector("#agenda-copy")
+  if (HOUSE.closedDates.includes(todayISO())) {
+    if (when) when.textContent = "Hoje a casa não abre. Nos outros dias, 9h às 20h. Domingo fechado."
+    if (agenda) agenda.textContent = "Hoje a casa não abre. Nos outros dias, segunda a sábado, das 9h às 20h."
+  }
+  document.querySelector("#chair-list").innerHTML = bookableBarbers().map(
     (barber) => `<article class="chair">
       <span class="monogram">${esc(barber.short)}</span>
       <span><strong>${esc(barber.name)}</strong><small>${esc(barber.specialty)}</small></span>
@@ -137,7 +146,7 @@ function stepBody() {
     ).join("")
   }
   if (draft.step === 1) {
-    return BARBERS.map(
+    return bookableBarbers().map(
       (barber) => `<button type="button" class="choice ${draft.barberId === barber.id ? "on" : ""}" data-act="barber" data-id="${barber.id}">
         <span class="monogram">${esc(barber.short)}</span>
         <span><strong>${esc(barber.name)}</strong><small>${esc(barber.specialty)}</small></span>
@@ -154,7 +163,8 @@ function stepBody() {
         </button>`
       })
       .join("")
-    return `<div class="day-scroller">${days}</div><p>Domingo a casa fecha. ${esc(HOUSE.place)}.</p>`
+    const todayClosed = HOUSE.closedDates.includes(todayISO()) ? " Hoje a casa não abre." : ""
+    return `<div class="day-scroller">${days}</div><p>Domingo a casa fecha.${esc(todayClosed)} ${esc(HOUSE.place)}.</p>`
   }
   if (draft.step === 3) {
     const slots = (draft.availability || []).find((day) => day.date === draft.date)?.slots || []
@@ -247,10 +257,28 @@ async function renderWizard() {
       if (gen !== wizardGen || !root.isConnected) return
     }
   }
-  const steps = ["Serviço", "Cadeira", "Dia", "Hora", "Confirmar"]
+  const steps =
+    bookableBarbers().length === 1
+      ? [
+          { step: 0, label: "Serviço" },
+          { step: 2, label: "Dia" },
+          { step: 3, label: "Hora" },
+          { step: 4, label: "Confirmar" },
+        ]
+      : [
+          { step: 0, label: "Serviço" },
+          { step: 1, label: "Cadeira" },
+          { step: 2, label: "Dia" },
+          { step: 3, label: "Hora" },
+          { step: 4, label: "Confirmar" },
+        ]
+  const current = steps.findIndex((item) => item.step === draft.step)
   root.innerHTML = `
     <ol class="stepper">${steps
-      .map((label, index) => `<li class="${index === draft.step ? "on" : index < draft.step ? "ok" : ""}">${label}</li>`)
+      .map(
+        (item, index) =>
+          `<li class="${index === current ? "on" : index < current ? "ok" : ""}">${item.label}</li>`,
+      )
       .join("")}</ol>
     ${draft.step > 0 ? `<button type="button" class="back" data-act="back">Voltar</button>` : ""}
     ${crumb()}
@@ -301,6 +329,37 @@ function loyaltyCardHtml(phone) {
 function miniStamps(phone) {
   const info = loyaltyOf(phone)
   return `<span class="mini-stamps">${Array.from({ length: info.every }, (_, index) => `<i class="${index < info.progress ? "on" : ""}"></i>`).join("")}</span>`
+}
+
+function paidCountLine(phone) {
+  const n = loyaltyOf(phone).paid
+  return n === 1 ? "1 corte pago" : `${n} cortes pagos`
+}
+
+function reasonText(reason) {
+  if (reason === "pedido") return "a pedido dele"
+  if (reason === "casa") return "eu marquei e desmarquei"
+  if (reason === "cliente") return "ele desmarcou"
+  return ""
+}
+
+function paidShown(phone) {
+  const p = digits(phone)
+  if (p.length < 10) return 0
+  return loyaltyOf(p).paid
+}
+
+function visitHistory(phone) {
+  return getAppointments()
+    .filter((item) => item.clientPhone === digits(phone) && item.kind !== "bloqueio")
+    .sort((a, b) => (b.date + (b.time || "")).localeCompare(a.date + (a.time || "")))
+}
+
+function visitLine(item) {
+  const label = item.status === "cancelado" ? "desmarcado" : item.status === "concluido" ? "veio" : "marcado"
+  const why = item.status === "cancelado" ? reasonText(item.reason) : ""
+  const clock = item.time && item.time !== "--" ? ` · ${item.time}` : ""
+  return `${formatLong(item.date)}${clock} · ${label}${why ? ` · ${why}` : ""}`
 }
 
 async function renderApp() {
@@ -394,6 +453,49 @@ function shiftDate(iso, delta) {
   return isoFromDate(date)
 }
 
+function dayTimes() {
+  const times = []
+  for (let start = HOUSE.open; start + HOUSE.slot <= HOUSE.close; start += HOUSE.slot) {
+    const hour = Math.floor(start / 60)
+    const minute = start % 60
+    times.push(`${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`)
+  }
+  return times
+}
+
+function houseSlots(dayClosed) {
+  if (dayClosed) {
+    return `<section class="slot-board"><p>Nesse dia a casa não abre. Passe para outro dia para fechar um horário.</p></section>`
+  }
+  const chair = bookableBarbers()[0]
+  if (!chair) return ""
+  const reserved = new Set(
+    reservationsOn(painelDate)
+      .filter((item) => item.status !== "cancelado" && item.barberId === chair.id)
+      .map((item) => item.time),
+  )
+  const blocked = new Set(blocksOn(painelDate).filter((item) => item.barberId === chair.id).map((item) => item.time))
+  const chips = dayTimes()
+    .map((time) => {
+      if (reserved.has(time)) return `<button type="button" class="time-chip" disabled>${time} ocupado</button>`
+      if (blocked.has(time)) {
+        return `<button type="button" class="time-chip shut" data-slot="open" data-time="${time}">${time} abrir</button>`
+      }
+      return `<button type="button" class="time-chip" data-slot="close" data-time="${time}">${time} fechar</button>`
+    })
+    .join("")
+  return `<section class="slot-board">
+      <p class="section-kicker">Comandos do dia</p>
+      <h2>Fechar horário</h2>
+      <p>O horário fechado sai da agenda do cliente. Abrir devolve o espaço. Cliente marcado fica como está.</p>
+      <div class="time-grid">${chips}</div>
+      <div class="row-actions">
+        <button type="button" class="btn btn-ghost" data-act="close-free">Fechar os livres</button>
+        <button type="button" class="btn btn-ghost" data-act="open-closed">Abrir os que fechei</button>
+      </div>
+    </section>`
+}
+
 async function renderPainel() {
   const root = document.querySelector("#painel-root")
   const gen = ++painelGen
@@ -426,37 +528,54 @@ async function renderPainel() {
   if (gen !== painelGen) return
   if (!painelDate) painelDate = isoFromDate(new Date())
   const rows = reservationsOn(painelDate)
-  const closed = parseISO(painelDate).getDay() === 0
+  const closed = parseISO(painelDate).getDay() === 0 || HOUSE.closedDates.includes(painelDate)
   const list = rows.length
     ? rows
         .map((item) => {
           const service = serviceById(item.serviceId)
           const barber = barberById(item.barberId)
+          const label =
+            item.status === "cancelado" ? "desmarcado" : item.status === "concluido" ? "veio" : "marcado"
+          const why = item.status === "cancelado" ? reasonText(item.reason) : ""
+          const unmark = `<button type="button" class="btn btn-ghost" data-status="cancelado" data-reason="pedido" data-id="${item.id}">A pedido dele</button>
+                <button type="button" class="btn btn-ghost" data-status="cancelado" data-reason="casa" data-id="${item.id}">Marquei e desmarquei</button>`
           const actions =
-            item.status === "agendado"
-              ? `<button type="button" class="btn btn-gold" data-status="concluido" data-id="${item.id}">Veio</button>
-                 <button type="button" class="btn btn-ghost" data-status="cancelado" data-id="${item.id}">Não veio</button>`
-              : `<button type="button" class="btn btn-ghost" data-status="agendado" data-id="${item.id}">Reabrir</button>`
+            item.status === "cancelado" && why
+              ? `<button type="button" class="btn btn-ghost" data-status="agendado" data-id="${item.id}">Marcar de novo</button>`
+              : `${
+                  item.status === "agendado"
+                    ? `<button type="button" class="btn btn-gold" data-status="concluido" data-id="${item.id}">Veio</button>`
+                    : item.status === "cancelado"
+                      ? `<button type="button" class="btn btn-ghost" data-status="agendado" data-id="${item.id}">Marcar de novo</button>`
+                      : ""
+                }
+                ${unmark}`
           return `<article class="appt ${item.status}">
             <strong>${esc(item.time)} · ${esc(service?.name || "")}</strong>
             <p>${esc(item.clientName)} · ${esc(formatPhone(item.clientPhone))}</p>
-            <p>${esc(barber?.name || "")}${item.freeCut ? " · cortesia" : ""} · <span class="tag">${item.status}</span></p>
-            <p>${esc(loyaltyLine(loyaltyOf(item.clientPhone)))} ${miniStamps(item.clientPhone)}</p>
+            <p>${esc(barber?.name || "")}${item.freeCut ? " · cortesia" : ""} · <span class="tag">${label}</span>${why ? ` · ${esc(why)}` : ""}</p>
+            <p>${esc(paidCountLine(item.clientPhone))} ${miniStamps(item.clientPhone)}</p>
             <div class="row-actions">${actions}</div>
           </article>`
         })
         .join("")
-    : `<p>${closed ? "Domingo a casa fecha." : "Nenhum horário nesta data."}</p>`
+    : `<p>${closed ? (parseISO(painelDate).getDay() === 0 ? "Domingo a casa fecha." : "Nesse dia a casa não abre.") : "Nenhum horário nesta data."}</p>`
   const people = clients()
   const roster = people.length
     ? people
         .map(
-          (person) => `<article class="person">
+          (person) => {
+            const history = visitHistory(person.phone)
+              .map((item) => `<li>${esc(visitLine(item))}</li>`)
+              .join("")
+            return `<article class="person">
             <strong>${esc(person.name)}</strong>
-            <p>${esc(formatPhone(person.phone))} · ${esc(loyaltyLine(loyaltyOf(person.phone)))}</p>
+            <p>${esc(formatPhone(person.phone))} · ${esc(paidCountLine(person.phone))}</p>
             ${miniStamps(person.phone)}
+            ${history ? `<ul class="visit-history">${history}</ul>` : ""}
             <button type="button" class="text-btn" data-use-client="${esc(person.phone)}" data-use-name="${esc(person.name)}">Usar no carimbo</button>
-          </article>`,
+          </article>`
+          },
         )
         .join("")
     : `<p>Nenhum cliente ainda.</p>`
@@ -473,18 +592,20 @@ async function renderPainel() {
           <strong>${esc(formatLong(painelDate))}</strong>
           <button type="button" class="btn btn-ghost" data-shift="1">Próximo dia</button>
         </div>
+        ${houseSlots(closed)}
         ${list}
       </div>
       <div>
         <form id="stamp-form">
           <p class="section-kicker">Balcão</p>
           <h2>Carimbar corte</h2>
-          <p>Para quem cortou sem reserva, ou para lançar o histórico. Dez cortes pagos liberam um.</p>
+          <p>Quem não veio, pediu para desmarcar ou desmarcou fica em zero. Lançar só entra quando o corte aconteceu.</p>
           <label class="field">Nome<input name="name" required maxlength="60" value="${esc(prefill.name)}" /></label>
           <label class="field">Telefone<input name="phone" required inputmode="tel" maxlength="16" value="${esc(prefill.phone)}" /></label>
           <label class="field">Serviço<select name="serviceId">${SERVICES.map((service) => `<option value="${service.id}" ${prefill.serviceId === service.id ? "selected" : ""}>${esc(service.name)}</option>`).join("")}</select></label>
-          <label class="field">Cadeira<select name="barberId">${BARBERS.map((barber) => `<option value="${barber.id}" ${prefill.barberId === barber.id ? "selected" : ""}>${esc(barber.name)}</option>`).join("")}</select></label>
-          <label class="field">Quantidade de cortes pagos<input name="count" type="number" min="1" max="30" value="${Number(prefill.count) || 1}" /></label>
+          <label class="field">Cadeira<select name="barberId">${bookableBarbers().map((barber) => `<option value="${barber.id}" ${prefill.barberId === barber.id ? "selected" : ""}>${esc(barber.name)}</option>`).join("")}</select></label>
+          <label class="field">Quantidade de cortes pagos<input id="paid-total" type="number" readonly value="${paidShown(prefill.phone)}" /></label>
+          <label class="field">Lançar agora<input name="count" type="number" min="0" max="30" value="${Number.isFinite(Number(prefill.count)) ? Number(prefill.count) : 0}" /></label>
           <label class="free-toggle"><input type="checkbox" name="free" /><span>Este é o corte grátis</span><small>Não soma nos dez. Só sai se já houver prêmio.</small></label>
           ${painelError ? `<p class="error">${esc(painelError)}</p>` : ""}
           <button class="btn btn-gold" type="submit">Lançar no cartão</button>
@@ -621,7 +742,9 @@ document.addEventListener("click", async (event) => {
       draft.time = null
       draft.availability = null
       draft.availabilityKey = ""
-      draft.step = 1
+      const only = bookableBarbers()
+      draft.barberId = only.length === 1 ? only[0].id : null
+      draft.step = only.length === 1 ? 2 : 1
       draft.done = null
     } else if (act === "barber") {
       draft.barberId = wizardButton.dataset.id
@@ -644,7 +767,8 @@ document.addEventListener("click", async (event) => {
         draft.availability = null
         draft.availabilityKey = ""
       }
-      draft.step = Math.max(0, draft.step - 1)
+      draft.step =
+        draft.step === 2 && bookableBarbers().length === 1 ? 0 : Math.max(0, draft.step - 1)
     } else if (act === "retry") {
       draft.availability = null
       draft.availabilityKey = ""
@@ -691,12 +815,21 @@ document.addEventListener("click", async (event) => {
   }
   const statusBtn = event.target.closest("[data-status]")
   if (statusBtn) {
-    const result = await setStatus(statusBtn.dataset.id, statusBtn.dataset.status)
+    const result = await setStatus(statusBtn.dataset.id, statusBtn.dataset.status, statusBtn.dataset.reason || "")
     if (!result.ok) {
       painelError = result.error
       painelMsg = ""
+    } else if (statusBtn.dataset.status === "concluido") {
+      painelMsg = "Presença marcada. Esse corte entrou na contagem."
+      painelError = ""
+    } else if (statusBtn.dataset.status === "cancelado") {
+      painelMsg =
+        statusBtn.dataset.reason === "casa"
+          ? "Anotado: você marcou e desmarcou. Esse corte não conta."
+          : "Anotado: desmarcado a pedido dele. Esse corte não conta."
+      painelError = ""
     } else {
-      painelMsg = statusBtn.dataset.status === "concluido" ? "Presença marcada. O cartão foi atualizado." : "Agenda atualizada."
+      painelMsg = "Horário marcado de novo."
       painelError = ""
     }
     renderPainel()
@@ -709,7 +842,53 @@ document.addEventListener("click", async (event) => {
     renderPainel()
     return
   }
+  const slotBtn = event.target.closest("[data-slot]")
+  if (slotBtn) {
+    const chair = bookableBarbers()[0]
+    const result = await setHouseSlot({
+      date: painelDate,
+      time: slotBtn.dataset.time,
+      barberId: chair?.id,
+      closed: slotBtn.dataset.slot === "close",
+    })
+    if (!result.ok) {
+      painelError = result.error
+      painelMsg = ""
+    } else {
+      painelMsg = slotBtn.dataset.slot === "close" ? "Horário fechado." : "Horário aberto de novo."
+      painelError = ""
+    }
+    renderPainel()
+    return
+  }
+
   const painelAct = event.target.closest("#painel-root [data-act]")
+  if (painelAct?.dataset.act === "close-free" || painelAct?.dataset.act === "open-closed") {
+    const closing = painelAct.dataset.act === "close-free"
+    const ask = closing
+      ? "Fechar todos os horários livres deste dia?"
+      : "Abrir os horários que a casa fechou neste dia?"
+    if (!confirm(ask)) return
+    const chair = bookableBarbers()[0]
+    const result = await setHouseSlot({
+      date: painelDate,
+      barberId: chair?.id,
+      closed: closing,
+      all: true,
+    })
+    if (!result.ok) {
+      painelError = result.error
+      painelMsg = ""
+    } else if (closing) {
+      painelMsg = result.count ? `${result.count} horários fechados.` : "Não havia horário livre para fechar."
+      painelError = ""
+    } else {
+      painelMsg = result.count ? `${result.count} horários abertos de novo.` : "Não havia horário fechado pela casa."
+      painelError = ""
+    }
+    renderPainel()
+    return
+  }
   if (painelAct?.dataset.act === "wipe") {
     if (confirm("Apagar todos os horários e carimbos da casa?")) {
       const result = await clearAppointments()
@@ -756,6 +935,10 @@ document.addEventListener("input", (event) => {
       return
     }
     syncFreeSlot()
+  }
+  if (event.target.name === "phone" && event.target.closest("#stamp-form")) {
+    const total = document.querySelector("#paid-total")
+    if (total) total.value = String(paidShown(event.target.value))
   }
   if (event.target.name === "free" && event.target.closest("#confirm-form")) {
     draft.useFree = event.target.checked
@@ -832,7 +1015,7 @@ document.addEventListener("submit", async (event) => {
       phone: String(data.get("phone") || ""),
       count: Number(data.get("count") || 1),
       serviceId: String(data.get("serviceId") || "classico"),
-      barberId: String(data.get("barberId") || "cadeira-m"),
+      barberId: String(data.get("barberId") || "cadeira-a"),
     }
     const result = await stampCuts({
       name: prefill.name,
@@ -853,9 +1036,9 @@ document.addEventListener("submit", async (event) => {
     } catch {
       /* a mensagem segue com o que já estiver na tela */
     }
-    const info = loyaltyOf(digits(prefill.phone))
     painelError = ""
-    painelMsg = data.get("free") === "on" ? "Cortesia carimbada." : `${result.count} corte(s) no cartão. ${loyaltyLine(info)}`
+    prefill.count = 0
+    painelMsg = data.get("free") === "on" ? "Cortesia carimbada." : `${result.count} corte(s) no cartão. ${paidCountLine(prefill.phone)}`
     renderPainel()
     return
   }
