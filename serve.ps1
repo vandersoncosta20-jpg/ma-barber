@@ -11,6 +11,8 @@ $types = @{
   ".css" = "text/css; charset=utf-8"
   ".js" = "text/javascript; charset=utf-8"
   ".png" = "image/png"
+  ".jpg" = "image/jpeg"
+  ".jpeg" = "image/jpeg"
   ".webmanifest" = "application/manifest+json"
   ".json" = "application/json; charset=utf-8"
   ".svg" = "image/svg+xml"

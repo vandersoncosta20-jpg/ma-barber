@@ -1,4 +1,5 @@
 import { HOUSE, SERVICES, bookableBarbers } from "./data.js"
+import { bindShop, renderShop } from "./shop.js"
 import { KINDS, fetchNotes, postNote, removeNote } from "./mural.js"
 import {
   barberById,
@@ -682,7 +683,7 @@ function loadMuralAdmin() {
 
 function route() {
   const raw = (location.hash.replace(/^#\/?/, "") || "home").split("?")[0]
-  const known = ["home", "historia", "servicos", "mural", "agendar", "app", "painel"]
+  const known = ["home", "historia", "servicos", "mural", "agendar", "app", "painel", "shop"]
   const page = known.includes(raw) ? raw : "home"
   document.querySelectorAll("[data-page]").forEach((section) => {
     section.hidden = section.dataset.page !== page
@@ -699,6 +700,7 @@ function route() {
   if (page === "agendar") renderWizard()
   if (page === "app") renderApp()
   if (page === "painel") renderPainel()
+  if (page === "shop") renderShop()
   window.scrollTo(0, 0)
   const titles = {
     home: "M&A Barber · Vila Militar, Itapuã",
@@ -708,6 +710,7 @@ function route() {
     mural: "Mural · M&A Barber",
     app: "App · M&A Barber",
     painel: "Área da casa · M&A Barber",
+    shop: "Shop · M&A Barber",
   }
   document.title = titles[page]
 }
@@ -1097,5 +1100,6 @@ window.addEventListener("storage", () => {
 
 load()
 fillBoards()
+bindShop()
 document.querySelector("#year").textContent = String(new Date().getFullYear())
 route()
